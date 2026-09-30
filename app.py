@@ -94,6 +94,19 @@ def run_ai(fn, *args):
     return None
 
 
+def text_counter(text, min_chars=0):
+    """Affiche un compteur dynamique de caractères et de mots avec un code couleur (Amélioration ingénieur)."""
+    chars = len(text)
+    words = len(text.split()) if text.strip() else 0
+    if min_chars > 0:
+        if chars < min_chars:
+            st.caption(f"✏️ {chars} caractères ({words} mots) — *Encore au moins {min_chars - chars} caractères recommandés*")
+        else:
+            st.caption(f"✅ {chars} caractères ({words} mots) — *Longueur idéale atteinte !*")
+    else:
+        st.caption(f"📊 {chars} caractères ({words} mots)")
+
+
 def top(title):
     st.button("← Accueil", on_click=go, args=("home",), key="back_" + ss.page)
     st.subheader(title)
@@ -148,6 +161,10 @@ def result_block(k, kind, poste=""):
     if not ss.get(k):
         return
     st.text_area("Résultat (modifiable)", key=k, height=380)
+    
+    # Information de copie rapide astucieuse et gratuite
+    st.info("💡 Astuce : Vous pouvez sélectionner tout le texte ci-dessus pour le copier rapidement.")
+    
     tpl = st.selectbox("Modèle de mise en page", list(TEMPLATES), key="tpl_" + k,
                        format_func=lambda t: f"{t} — {TEMPLATES[t]}")
     st.caption("💡 Relisez toujours le document avant de postuler : l'IA structure, vous validez.")
@@ -256,7 +273,7 @@ def page_cv():
             out = run_ai(ai.make_cv, dict(ss.cv))
             if out:
                 ss["cv_out"] = out
-                st.balloons()  # Effet visuel Waouh de réussite
+                st.balloons()
     result_block("cv_out", "CV", ss.cv.get("poste", ""))
 
 
@@ -311,6 +328,10 @@ def page_adapt():
     top("Adapter mon CV à une offre")
     cv = import_cv("ad")
     offer = st.text_area("Collez l'annonce", height=180, key="ad_offer")
+    
+    # -> Compteur intégré pour l'offre d'emploi
+    text_counter(ss.get("ad_offer", ""), min_chars=30)
+
     ready = len(cv.strip()) >= 50 and len(offer.strip()) >= 30
     if st.button("🔎 COMPARER CV ↔ OFFRE", key="ad_cmp"):
         if not ready:
@@ -353,6 +374,10 @@ def page_express():
     st.caption("Décrivez votre profil librement. L'IA extrait les faits clés pour rédiger vos documents instantanément.")
     free = st.text_area("Votre texte libre", height=160, key="ex_text",
                         placeholder="Ex: Je cherche un emploi de développeur web à Lyon, 3 ans d'expérience...")
+    
+    # -> Compteur intégré pour le texte libre
+    text_counter(ss.get("ex_text", ""), min_chars=20)
+
     lang = st.selectbox("Langue", list(LANGS), key="ex_lang")
     country = st.selectbox("Pays ciblé", COUNTRIES, key="ex_country")
     if st.button("🔎 EXTRAIRE LES INFORMATIONS", key="ex_extract"):
