@@ -209,23 +209,31 @@ def from_facts(facts, kind, lang, country):
     )
 
 
-# --- FONCTIONS D'ASSISTANTE INTELLIGENTE ---
+# --- SUGGESTIONS INTELLIGENTES (sans inventer de faits) ---
 
-def suggest_skills(poste, sector):
-    """Génère une liste de compétences clés adaptées au poste et secteur."""
-    prompt = f"""En tant qu'expert en recrutement, génère une liste claire et percutante de compétences (techniques et soft skills) adaptées pour le poste de '{poste}' dans le secteur '{sector}'.
-    Format attendu : des listes à puces prêtes pour un CV."""
-    return ask(prompt)
+def suggest_summary(poste, sector, level, experiences=""):
+    return ask(
+        "Rédige un profil professionnel de CV (3 à 4 lignes, texte brut, sans titre) en te "
+        "basant UNIQUEMENT sur ces éléments fournis. N'invente ni années d'expérience, ni "
+        "employeurs, ni compétences, ni chiffres.\n"
+        f"Poste visé : {poste}\nSecteur : {sector}\nNiveau : {level}\n"
+        f"Expériences fournies :\n{experiences}"
+    )
 
 
 def suggest_bullets(poste, experience_summary):
-    """Transforme une description brute en missions professionnelles percutantes."""
-    prompt = f"""Transforme la description brute suivante pour le poste de '{poste}' en missions et réalisations professionnelles percutantes sous forme de puces (verbes d'action, orientation résultats) :
-    Description brute : {experience_summary}"""
-    return ask(prompt)
+    return ask(
+        "Reformule ces notes d'expérience en puces '- ' percutantes (verbes d'action) sans "
+        "ajouter aucun fait, chiffre, résultat ou outil absent du texte. Conserve les blocs "
+        f"(poste, entreprise, ville, période). Texte brut uniquement.\nPoste visé : {poste}\n"
+        f"Notes :\n{experience_summary}"
+    )
 
 
-def suggest_summary(poste, sector, level):
-    """Rédige une accroche / profil professionnel percutant."""
-    prompt = f"""Rédige un profil professionnel (résumé de CV de 3 à 4 lignes) accrocheur et moderne pour un profil de niveau '{level}' en tant que '{poste}' (secteur : {sector})."""
-    return ask(prompt)
+def suggest_skills(poste, sector):
+    return ask(
+        "Liste 10 à 12 compétences généralement attendues pour ce poste, en puces courtes "
+        "'- '. Ce sont de simples SUGGESTIONS que le candidat devra vérifier.\n"
+        f"Poste : {poste}\nSecteur : {sector}"
+    )
+    
