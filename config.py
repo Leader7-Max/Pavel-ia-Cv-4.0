@@ -29,4 +29,4 @@ TEMPLATES = {
 }
 
 # Lien PayPal : renseignez-le ici, ou (mieux) dans Streamlit Secrets : PAYPAL_URL = "https://paypal.me/..."
-PAYPAL_URL = ""
+PAYPAL_URL = "https://www.paypal.me/Pavelia38"
