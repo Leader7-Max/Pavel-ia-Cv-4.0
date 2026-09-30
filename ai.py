@@ -1,4 +1,4 @@
-"""Appels Gemini via le SDK google-generativeai et extraction de texte PDF."""
+"""Appels Gemini via SDK google-generativeai et extraction de texte PDF."""
 import io
 import json
 
@@ -48,29 +48,37 @@ def _configure():
 def ask(prompt):
     _configure()
 
-    # Modèle actif officiel sans v1beta
-    model_name = str(_secret("GEMINI_MODEL", "gemini-2.5-flash") or "").strip().strip("\"'").strip()
-    if model_name.startswith("models/"):
-        model_name = model_name[len("models/"):]
+    # Modèles Gemini valides testés dans l'ordre de priorité
+    models_to_try = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.0-flash-lite"]
 
-    try:
-        model = genai.GenerativeModel(
-            model_name=model_name,
-            system_instruction=RULES,
-            generation_config={"temperature": 0.3},
-        )
-        response = model.generate_content(prompt)
-        if response and response.text:
-            return response.text.strip()
-    except Exception as e:
-        err_msg = str(e)
-        if "API_KEY" in err_msg or "400" in err_msg or "403" in err_msg:
-            raise AIError("Clé API refusée ou invalide. Vérifiez GEMINI_API_KEY dans Streamlit Secrets.")
-        if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-            raise AIError("Quota IA atteint. Réessayez dans quelques minutes.")
-        raise AIError(f"Erreur IA ({err_msg}). Vérifiez la clé API dans Streamlit Secrets.")
+    custom_model = str(_secret("GEMINI_MODEL", "") or "").strip().strip("\"'").strip()
+    if custom_model:
+        if custom_model.startswith("models/"):
+            custom_model = custom_model[len("models/"):]
+        models_to_try.insert(0, custom_model)
 
-    raise AIError("Réponse vide de l'IA. Réessayez.")
+    last_error = None
+    for model_name in models_to_try:
+        try:
+            model = genai.GenerativeModel(
+                model_name=model_name,
+                system_instruction=RULES,
+                generation_config={"temperature": 0.3},
+            )
+            response = model.generate_content(prompt)
+            if response and response.text:
+                return response.text.strip()
+        except Exception as e:
+            last_error = e
+            continue
+
+    err_msg = str(last_error) if last_error else "Erreur inconnue"
+    if "API_KEY" in err_msg or "400" in err_msg or "403" in err_msg:
+        raise AIError("Clé API refusée ou invalide. Vérifiez GEMINI_API_KEY dans Streamlit Secrets.")
+    if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+        raise AIError("Quota IA atteint. Réessayez dans quelques minutes.")
+
+    raise AIError(f"Erreur IA ({err_msg}). Vérifiez la clé API dans Streamlit Secrets.")
 
 
 @st.cache_data(ttl=600, max_entries=5, show_spinner=False)
@@ -193,4 +201,4 @@ def from_facts(facts, kind, lang, country):
     return ask(
         f"Rédige en {_lang(lang)} une lettre de motivation naturelle (marché : {country}) "
         f"à partir de ces faits validés uniquement, sans sections '##'.\n{facts}"
-        )
+    )
