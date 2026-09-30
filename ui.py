@@ -117,4 +117,4 @@ def hero():
 def mini_logo():
     st.markdown(f'<div class="minilogo">{LOGO.format(s=30)}<span>Pavel IA <b>CV 4.0</b></span></div>',
                 unsafe_allow_html=True)
-  
+        
