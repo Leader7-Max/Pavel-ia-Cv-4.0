@@ -55,6 +55,12 @@ def run_ai(fn, *args):
     return None
 
 
+def celebrate(big=False):
+    st.toast("Document prêt : relisez-le, puis téléchargez-le.", icon="✨")
+    if big:
+        st.balloons()
+
+
 def text_counter(text, min_chars=0):
     chars = len(text)
     words = len(text.split()) if text.strip() else 0
@@ -137,7 +143,9 @@ def save_doc(kind, text, tpl, poste):
     ss.docs.append({"kind": kind, "text": text, "tpl": tpl, "poste": poste,
                     "date": datetime.date.today().strftime("%d/%m/%Y")})
     in_vault = vault.save(kind, poste, tpl, ss.docs[-1]["date"], text)
-    st.toast("Enregistré dans votre coffre sécurisé !" if in_vault else "Enregistré pour cette session. Activez le coffre (Mes documents) pour le garder.", icon="🎉")
+    st.toast("Enregistré dans votre coffre sécurisé !" if in_vault else
+             "Enregistré pour cette session. Activez le coffre (Mes documents) pour le garder.",
+             icon="🎉")
 
 
 def downloads(txt, tpl, base, k):
@@ -198,26 +206,30 @@ def ats_button(k, cv, offer=""):
     show_ats("ats_" + k)
 
 
-
 # ---------------------------------------------------------------- pages
 def home():
     ui.hero()
+    ui.badges()
     n_cv = sum(d["kind"].startswith("CV") for d in ss.docs)
     n_l = sum(d["kind"] == "Lettre" for d in ss.docs)
-    c1, c2 = st.columns(2)
-    c1.metric("📄 CV créés", n_cv)
-    c2.metric("✉️ Lettres prêtes", n_l)
+    ui.stats(n_cv, n_l)
     social.social_bar()
-    st.write("")
-    for label, p in [("📄 CRÉER MON CV", "cv"), ("✉️ MA LETTRE DE MOTIVATION", "letter"),
-                     ("🤖 ANALYSER MON CV", "analyze"),
-                     ("🎯 ADAPTER MON CV À UNE OFFRE", "adapt"), ("🌍 TRADUIRE MON CV", "translate"),
-                     ("🚀 CV EXPRESS", "express"), ("📁 MES DOCUMENTS", "docs")]:
-        st.button(label, on_click=go, args=(p,), key="home_" + p)
+    ui.section("Que souhaitez-vous faire ?")
+    items = [("📄 CRÉER MON CV", "cv"), ("✉️ LETTRE DE MOTIVATION", "letter"),
+             ("🤖 ANALYSER MON CV", "analyze"), ("🎯 ADAPTER À UNE OFFRE", "adapt"),
+             ("🌍 TRADUIRE MON CV", "translate"), ("🚀 CV EXPRESS", "express"),
+             ("📁 MES DOCUMENTS", "docs")]
+    for i in range(0, len(items), 2):
+        row = items[i:i + 2]
+        cols = st.columns(2) if len(row) == 2 else [st.container()]
+        for col, (label, p) in zip(cols, row):
+            col.button(label, on_click=go, args=(p,), key="home_" + p)
+    ui.steps()
     with st.expander("🔒 Confidentialité"):
         st.write("Vos informations sont utilisées pour générer et personnaliser vos documents. "
                  "Le contenu est envoyé au service IA (Gemini) pour la génération. Vos documents "
-                 "ne sont conservés que pendant votre session.")
+                 "ne sont conservés que pendant votre session, sauf si vous activez le coffre "
+                 "personnel (sauvegarde chiffrée avec votre code).")
 
 
 def page_cv():
@@ -272,7 +284,7 @@ def page_cv():
             out = run_ai(ai.make_cv, dict(ss.cv))
             if out:
                 ss["cv_out"] = out
-                st.balloons()
+                celebrate(True)
     result_block("cv_out", "CV", ss.cv.get("poste", ""))
 
 
@@ -299,7 +311,7 @@ def page_letter():
             out = run_ai(ai.make_letter, d)
             if out:
                 ss["letter_out"] = out
-                st.balloons()
+                celebrate(True)
     result_block("letter_out", "Lettre", poste)
 
 
@@ -318,7 +330,7 @@ def page_analyze():
             out = run_ai(ai.improve_cv, cv, ss["an_res"])
             if out:
                 ss["imp_out"] = out
-                st.balloons()
+                celebrate()
     result_block("imp_out", "CV amélioré")
     ats_button("an", cv)
 
@@ -346,7 +358,7 @@ def page_adapt():
             out = run_ai(ai.adapt, cv, offer)
             if out:
                 ss["ad_out"] = out
-                st.balloons()
+                celebrate()
     result_block("ad_out", "CV adapté")
     ats_button("ad", cv, offer)
 
@@ -362,7 +374,7 @@ def page_translate():
             out = run_ai(ai.translate, txt, lang)
             if out:
                 ss["tr_out"] = out
-                st.balloons()
+                celebrate()
     result_block("tr_out", "CV traduit")
 
 
@@ -389,12 +401,12 @@ def page_express():
             out = run_ai(ai.from_facts, facts, "CV", lang, country)
             if out:
                 ss["ex_cv"] = out
-                st.balloons()
+                celebrate()
         if st.button("✉️ GÉNÉRER MA LETTRE", key="ex_l_btn"):
             out = run_ai(ai.from_facts, facts, "Lettre", lang, country)
             if out:
                 ss["ex_letter"] = out
-                st.balloons()
+                celebrate()
     result_block("ex_cv", "CV")
     result_block("ex_letter", "Lettre")
 
@@ -427,275 +439,4 @@ PAGES = {"home": home, "cv": page_cv, "letter": page_letter, "analyze": page_ana
 PAGES.get(ss.page, home)()
 st.divider()
 social.footer(ss.page != "home")
-():
-        m = re.match(r"^\s*(.+?)\s*\|\s*(\d{1,3})\s*\|\s*(.+)$", l)
-        if m:
-            n = min(int(m.group(2)), 100)
-            st.write(f"**{m.group(1)}** — {n}/100")
-            st.progress(n / 100)
-            st.caption(m.group(3))
-        elif l.strip():
-            rest.append(l)
-    if rest:
-        st.markdown("\n\n".join(rest))
-
-
-def ats_button(k, cv, offer=""):
-    if st.button("📄 ANALYSE ATS", key="ats_btn_" + k):
-        if not cv.strip():
-            st.warning("Ajoutez d'abord le texte de votre CV.")
-        else:
-            ss["ats_" + k] = run_ai(ai.ats, cv, offer) or ss.get("ats_" + k, "")
-    show_ats("ats_" + k)
-
-
-def support_card():
-    url = ""
-    try:
-        url = str(st.secrets.get("PAYPAL_URL", "") or "").strip()
-    except Exception:
-        pass
-    url = url or PAYPAL_URL.strip()
-    st.markdown('<div class="support"><b>💛 Pavel IA est gratuit</b><br>Il vous a été utile ? '
-                'Un petit soutien aide à le faire grandir.</div>', unsafe_allow_html=True)
-    if url.startswith("https://"):
-        st.link_button("💛 SOUTENIR PAVEL IA VIA PAYPAL", url, use_container_width=True)
-    else:
-        st.button("💛 SOUTENIR VIA PAYPAL", key="paypal_btn",
-                  on_click=lambda: st.toast("Le lien PayPal arrive bientôt. Merci ! 🙏"))
-
-
-# ---------------------------------------------------------------- pages
-def home():
-    st.markdown('<div class="hero"><h1>PAVEL IA</h1><p>Votre carrière commence par un bon CV.</p>'
-                '<span class="badge">Créez. Améliorez. Adaptez. Postulez.</span></div>',
-                unsafe_allow_html=True)
-    n_cv = sum(d["kind"].startswith("CV") for d in ss.docs)
-    n_l = sum(d["kind"] == "Lettre" for d in ss.docs)
-    c1, c2 = st.columns(2)
-    c1.metric("📄 CV créés", n_cv)
-    c2.metric("✉️ Lettres prêtes", n_l)
-    st.write("")
-    for label, p in [("📄 CRÉER MON CV", "cv"), ("✉️ MA LETTRE DE MOTIVATION", "letter"),
-                     ("🤖 ANALYSER MON CV", "analyze"),
-                     ("🎯 ADAPTER MON CV À UNE OFFRE", "adapt"), ("🌍 TRADUIRE MON CV", "translate"),
-                     ("🚀 CV EXPRESS", "express"), ("📁 MES DOCUMENTS", "docs")]:
-        st.button(label, on_click=go, args=(p,), key="home_" + p)
-    with st.expander("🔒 Confidentialité"):
-        st.write("Vos informations sont utilisées pour générer et personnaliser vos documents. "
-                 "Le contenu est envoyé au service IA (PAVEL IA) pour la génération. Vos documents "
-                 "ne sont conservés que pendant votre session.")
-
-
-def page_cv():
-    top("Créer mon CV")
-    step = ss.step
-    st.progress(step / 4)
-    st.caption(f"Étape {step} sur 4 — {STEPS[step - 1]}")
-    if step == 1:
-        for lab, key in [("Prénom", "prenom"), ("Nom", "nom"), ("Téléphone", "tel"),
-                         ("Email", "email"), ("Ville", "ville"), ("Pays", "pays"),
-                         ("LinkedIn (facultatif)", "linkedin")]:
-            field(lab, key)
-    elif step == 2:
-        pick("Type de CV", "cvtype", CV_TYPES)
-        field("Secteur (personnalisable)", "sector")
-        field("Poste recherché", "poste")
-        pick("Niveau d'expérience", "level", LEVELS)
-        pick("Pays ciblé", "target_country", COUNTRIES)
-        field("Ville ciblée", "target_city")
-        pick("Langue du CV", "lang", list(LANGS))
-        field("Profil professionnel (modifiable, facultatif)", "profile", True)
-        st.button("✨ Rédiger mon profil professionnel (IA)", on_click=fill_profile,
-                  key="ai_sugg_summary")
-    elif step == 3:
-        field("Expériences (une par bloc : poste, entreprise, ville, période, missions, "
-              "résultats)", "experiences", True)
-        st.button("💡 Suggérer des missions percutantes (IA)", on_click=improve_field,
-                  args=("experiences", "bullets"), key="ai_sugg_bullets")
-        st.button("✨ Améliorer cette formulation (IA)", on_click=improve_field,
-                  args=("experiences", "improve"), key="impr_exp")
-        field("Formation (diplôme, établissement, ville, période)", "formation", True)
-    else:
-        field("Compétences (techniques, professionnelles, logiciels, outils)", "skills", True)
-        st.button("💡 Voir des suggestions de compétences (IA)", on_click=fetch_skills,
-                  key="ai_sugg_skills")
-        if ss.get("sugg_skills"):
-            st.info("Suggestions à vérifier : recopiez uniquement ce que vous maîtrisez vraiment.")
-            st.markdown(ss["sugg_skills"])
-        field("Langues et niveaux", "languages", True)
-        field("Compléments (certifications, permis, disponibilité, mobilité, intérêts)",
-              "extras", True)
-    c1, c2 = st.columns(2)
-    if step > 1:
-        c1.button("← Précédent", on_click=setstep, args=(step - 1,), key="prev")
-    if step < 4:
-        c2.button("Suivant →", on_click=setstep, args=(step + 1,), key="next")
-    if step == 4 and st.button("✨ GÉNÉRER MON CV", key="gen_cv"):
-        sync()
-        if not (ss.cv.get("nom") or ss.cv.get("prenom")):
-            st.warning("Renseignez au moins votre nom à l'étape 1.")
-        else:
-            out = run_ai(ai.make_cv, dict(ss.cv))
-            if out:
-                ss["cv_out"] = out
-                st.balloons()
-    result_block("cv_out", "CV", ss.cv.get("poste", ""))
-
-
-def page_letter():
-    top("Ma lettre de motivation")
-    nom = st.text_input("Nom", key="lt_nom")
-    poste = st.text_input("Poste recherché", key="lt_poste")
-    ent = st.text_input("Entreprise", key="lt_ent")
-    ville = st.text_input("Ville", key="lt_ville")
-    annonce = st.text_area("Annonce complète", height=180, key="lt_annonce")
-    exp = st.text_area("Votre expérience", key="lt_exp")
-    comp = st.text_area("Vos compétences", key="lt_comp")
-    dispo = st.text_input("Disponibilité", key="lt_dispo")
-    tone = st.selectbox("Ton", ["Professionnel", "Chaleureux", "Dynamique", "Sobre"], key="lt_tone")
-    length = st.selectbox("Longueur", ["Courte", "Moyenne", "Détaillée"], key="lt_len")
-    lang = st.selectbox("Langue", list(LANGS), key="lt_lang")
-    if st.button("✨ GÉNÉRER MA LETTRE", key="gen_letter"):
-        if not (nom.strip() and poste.strip()):
-            st.warning("Renseignez au moins votre nom et le poste.")
-        else:
-            d = {"nom": nom, "poste": poste, "entreprise": ent, "ville": ville,
-                 "annonce": annonce, "experience": exp, "competences": comp,
-                 "disponibilite": dispo, "tone": tone, "length": length, "lang": lang}
-            out = run_ai(ai.make_letter, d)
-            if out:
-                ss["letter_out"] = out
-                st.balloons()
-    result_block("letter_out", "Lettre", poste)
-
-
-def page_analyze():
-    top("Analyser mon CV")
-    cv = import_cv("an")
-    if st.button("🤖 LANCER L'ANALYSE", key="an_btn"):
-        if len(cv.strip()) < 50:
-            st.warning("Importez ou collez d'abord votre CV.")
-        else:
-            ss["an_res"] = run_ai(ai.analyze, cv) or ss.get("an_res", "")
-    if ss.get("an_res"):
-        st.markdown("### 📋 ANALYSE PAVEL IA")
-        st.markdown(ss["an_res"])
-        if st.button("✨ AMÉLIORER MON CV", key="imp_btn"):
-            out = run_ai(ai.improve_cv, cv, ss["an_res"])
-            if out:
-                ss["imp_out"] = out
-                st.balloons()
-    result_block("imp_out", "SUPER 🥰 CV amélioré")
-    ats_button("an", cv)
-
-
-def page_adapt():
-    top("Adapter mon CV à une offre")
-    cv = import_cv("ad")
-    offer = st.text_area("Collez l'annonce", height=180, key="ad_offer")
-    text_counter(offer, min_chars=30)
-    ready = len(cv.strip()) >= 50 and len(offer.strip()) >= 30
-    if st.button("🔎 COMPARER CV ↔ OFFRE", key="ad_cmp"):
-        if not ready:
-            st.warning("Ajoutez votre CV et l'annonce de l'offre.")
-        else:
-            ss["ad_res"] = run_ai(ai.match, cv, offer) or ss.get("ad_res", "")
-    if ss.get("ad_res"):
-        m = re.search(r"(\d{1,3})\s*%", ss["ad_res"])
-        if m:
-            n = min(int(m.group(1)), 100)
-            st.progress(n / 100)
-            st.caption(f"Correspondance : {n} % — estimation indicative, pas une garantie "
-                       "d'embauche ni de réussite ATS.")
-        st.markdown(ss["ad_res"])
-        if st.button("✨ GÉNÉRER LE CV ADAPTÉ", key="ad_gen"):
-            out = run_ai(ai.adapt, cv, offer)
-            if out:
-                ss["ad_out"] = out
-                st.balloons()
-    result_block("ad_out", "CV adapté")
-    ats_button("ad", cv, offer)
-
-
-def page_translate():
-    top("Traduire mon CV")
-    txt = import_cv("tr")
-    lang = st.selectbox("Traduire vers", list(LANGS), key="tr_lang")
-    if st.button("🌍 TRADUIRE", key="tr_btn"):
-        if len(txt.strip()) < 20:
-            st.warning("Importez ou collez d'abord le texte.")
-        else:
-            out = run_ai(ai.translate, txt, lang)
-            if out:
-                ss["tr_out"] = out
-                st.balloons()
-    result_block("tr_out", "CV traduit")
-
-
-def page_express():
-    top("CV Express")
-    st.caption("Décrivez votre situation librement. L'IA extrait les faits, vous les corrigez, "
-               "puis elle génère vos documents sans rien inventer.")
-    free = st.text_area("Votre texte libre", height=160, key="ex_text",
-                        placeholder="Je cherche un emploi de préparateur de commande à Lyon...")
-    text_counter(free, min_chars=20)
-    lang = st.selectbox("Langue", list(LANGS), key="ex_lang")
-    country = st.selectbox("Pays ciblé", COUNTRIES, key="ex_country")
-    if st.button("🔎 EXTRAIRE LES INFORMATIONS", key="ex_extract"):
-        if len(free.strip()) < 20:
-            st.warning("Écrivez quelques phrases sur vous.")
-        else:
-            out = run_ai(ai.extract, free)
-            if out:
-                ss["ex_facts"] = out
-    if ss.get("ex_facts"):
-        facts = st.text_area("Informations extraites (corrigez avant de générer)", height=220,
-                             key="ex_facts")
-        if st.button("✨ GÉNÉRER MON CV", key="ex_cv_btn"):
-            out = run_ai(ai.from_facts, facts, "CV", lang, country)
-            if out:ss["ex_facts"] = out
-    if ss.get("ex_facts"):
-        facts = st.text_area("Informations extraites (corrigez avant de générer)", height=220,
-                             key="ex_facts")
-        if st.button("✨ GÉNÉRER MON CV", key="ex_cv_btn"):
-            out = run_ai(ai.from_facts, facts, "CV", lang, country)
-            if out:
-                ss["ex_cv"] = out
-                st.balloons()
-        if st.button("✉️ GÉNÉRER MA LETTRE", key="ex_l_btn"):
-            out = run_ai(ai.from_facts, facts, "Lettre", lang, country)
-            if out:
-                ss["ex_letter"] = out
-                st.balloons()
-    result_block("ex_cv", "CV")
-    result_block("ex_letter", "Lettre")
-
-
-def reuse(i):
-    ss["cv_out"] = ss.docs[i]["text"]
-    ss.page = "cv"
-    ss.step = 4
-
-
-def page_docs():
-    top("Mes documents")
-    st.caption("📂 Conservés pendant votre session uniquement : téléchargez ce que vous voulez garder.")
-    if not ss.docs:
-        st.info("Aucun document enregistré pour l'instant.")
-    for i in reversed(range(len(ss.docs))):
-        d = ss.docs[i]
-        with st.expander(f"{d['kind']} — {d['poste'] or 'sans titre'} — {d['date']}"):
-            st.write(f"Modèle : {d['tpl']}")
-            downloads(d["text"], d["tpl"], f"{d['kind']}_{i}".replace(" ", "_"), f"doc{i}")
-            if d["kind"].startswith("CV"):
-                st.button("♻️ Réutiliser", on_click=reuse, args=(i,), key=f"reuse{i}")
-
-
-PAGES = {"home": home, "cv": page_cv, "letter": page_letter, "analyze": page_analyze,
-         "adapt": page_adapt, "translate": page_translate, "express": page_express,
-         "docs": page_docs}
-PAGES.get(ss.page, home)()
-st.divider()
-support_card()
-  
+                                             
