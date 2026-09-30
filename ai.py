@@ -1,8 +1,8 @@
-"""Appels Gemini via SDK google-generativeai et extraction de texte PDF."""
+"""Appels Gemini (REST) et extraction de texte PDF."""
 import io
 import json
 
-import google.generativeai as genai
+import requests
 import streamlit as st
 from pypdf import PdfReader
 
@@ -37,40 +37,53 @@ def _secret(name, default=""):
         return default
 
 
-def _configure():
-    raw_key = str(_secret("GEMINI_API_KEY") or "")
-    key = "".join(raw_key.split()).strip("\"'").strip()
-    if not key:
-        raise AIError("Clé GEMINI_API_KEY absente : ajoutez-la dans Streamlit Secrets.")
-    genai.configure(api_key=key)
+FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-2.0-flash"]
+
+
+def _models():
+    raw = str(_secret("GEMINI_MODEL", "") or "").strip().strip("\"'").strip()
+    if raw.startswith("models/"):
+        raw = raw[len("models/"):]
+    out = [raw] if raw else []
+    return out + [m for m in FALLBACK_MODELS if m not in out]
 
 
 def ask(prompt):
-    _configure()
-
-    # Modèle recommandé par le système
-    model_name = str(_secret("GEMINI_MODEL", "gemini-2.0-flash") or "").strip().strip("\"'").strip()
-    if model_name.startswith("models/"):
-        model_name = model_name[len("models/"):]
-
+    key = str(_secret("GEMINI_API_KEY") or "").strip().strip("\"'").strip()
+    if not key:
+        raise AIError("Clé GEMINI_API_KEY absente : ajoutez-la dans Streamlit Secrets.")
+    body = {
+        "systemInstruction": {"parts": [{"text": RULES}]},
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.4},
+    }
+    r = None
+    for model in _models():
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        try:
+            r = requests.post(url, json=body, headers={"x-goog-api-key": key}, timeout=60)
+        except requests.Timeout:
+            raise AIError("Le service IA met trop de temps à répondre. Réessayez.")
+        except requests.RequestException:
+            raise AIError("Connexion au service IA impossible. Vérifiez votre réseau.")
+        if r.status_code != 404:
+            break
+    if r.status_code == 404:
+        raise AIError("Aucun modèle Gemini disponible (404). Vérifiez ou supprimez le secret "
+                      "GEMINI_MODEL, ou utilisez un nom valide comme gemini-flash-latest.")
+    if r.status_code == 429:
+        raise AIError("Quota IA atteint. Réessayez dans quelques minutes.")
+    if r.status_code in (400, 401, 403):
+        raise AIError("Clé API refusée ou requête invalide. Vérifiez GEMINI_API_KEY.")
+    if r.status_code != 200:
+        raise AIError(f"Erreur du service IA ({r.status_code}). Réessayez.")
     try:
-        model = genai.GenerativeModel(
-            model_name=model_name,
-            system_instruction=RULES,
-            generation_config={"temperature": 0.3},
-        )
-        response = model.generate_content(prompt)
-        if response and response.text:
-            return response.text.strip()
-    except Exception as e:
-        err_msg = str(e)
-        if "API_KEY" in err_msg or "400" in err_msg or "403" in err_msg:
-            raise AIError("Clé API refusée ou invalide. Vérifiez GEMINI_API_KEY dans Streamlit Secrets.")
-        if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-            raise AIError("Quota IA atteint. Réessayez dans quelques minutes.")
-        raise AIError(f"Erreur IA ({err_msg}). Vérifiez la clé API dans Streamlit Secrets.")
-
-    raise AIError("Réponse vide de l'IA. Réessayez.")
+        text = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except (KeyError, IndexError, ValueError, TypeError):
+        raise AIError("Réponse vide ou bloquée par l'IA. Reformulez votre demande.")
+    if not text:
+        raise AIError("Réponse vide de l'IA. Réessayez.")
+    return text
 
 
 @st.cache_data(ttl=600, max_entries=5, show_spinner=False)
@@ -193,4 +206,26 @@ def from_facts(facts, kind, lang, country):
     return ask(
         f"Rédige en {_lang(lang)} une lettre de motivation naturelle (marché : {country}) "
         f"à partir de ces faits validés uniquement, sans sections '##'.\n{facts}"
-        )
+    )
+
+
+# --- FONCTIONS D'ASSISTANTE INTELLIGENTE ---
+
+def suggest_skills(poste, sector):
+    """Génère une liste de compétences clés adaptées au poste et secteur."""
+    prompt = f"""En tant qu'expert en recrutement, génère une liste claire et percutante de compétences (techniques et soft skills) adaptées pour le poste de '{poste}' dans le secteur '{sector}'.
+    Format attendu : des listes à puces prêtes pour un CV."""
+    return ask(prompt)
+
+
+def suggest_bullets(poste, experience_summary):
+    """Transforme une description brute en missions professionnelles percutantes."""
+    prompt = f"""Transforme la description brute suivante pour le poste de '{poste}' en missions et réalisations professionnelles percutantes sous forme de puces (verbes d'action, orientation résultats) :
+    Description brute : {experience_summary}"""
+    return ask(prompt)
+
+
+def suggest_summary(poste, sector, level):
+    """Rédige une accroche / profil professionnel percutant."""
+    prompt = f"""Rédige un profil professionnel (résumé de CV de 3 à 4 lignes) accrocheur et moderne pour un profil de niveau '{level}' en tant que '{poste}' (secteur : {sector})."""
+    return ask(prompt)
