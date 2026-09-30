@@ -153,7 +153,7 @@ def downloads(txt, tpl, base, k):
             key="docx_" + k)
     except Exception:
         st.error("Export PDF/Word impossible avec ce texte. Vérifiez-le puis réessayez.")
-    st.download_button("⬇️ Télécharger en TXT", exporters.to_txt(txt), base + ".txt",
+    st.download_button("⬇️️ Télécharger en TXT", exporters.to_txt(txt), base + ".txt",
                        "text/plain", key="txt_" + k)
 
 
@@ -231,11 +231,13 @@ def page_cv():
     step = ss.step
     st.progress(step / 4)
     st.caption(f"Étape {step} sur 4")
+    
     if step == 1:
         for lab, key in [("Prénom", "prenom"), ("Nom", "nom"), ("Téléphone", "tel"),
                          ("Email", "email"), ("Ville", "ville"), ("Pays", "pays"),
                          ("LinkedIn (facultatif)", "linkedin")]:
             field(lab, key)
+            
     elif step == 2:
         pick("Type de CV", "cvtype", CV_TYPES)
         field("Secteur (personnalisable)", "sector")
@@ -244,14 +246,59 @@ def page_cv():
         pick("Pays ciblé", "target_country", COUNTRIES)
         field("Ville ciblée", "target_city")
         pick("Langue du CV", "lang", list(LANGS))
+        
+        # Assistant IA pour générer un profil professionnel accrocheur
+        st.markdown("---")
+        st.markdown("### 💡 Assistant IA : Accroche / Profil")
+        if st.button("✨ Suggérer un profil professionnel", key="ai_sugg_summary"):
+            sync()
+            p_ost = ss.cv.get("poste", "Professionnel")
+            s_ect = ss.cv.get("sector", "Général")
+            l_vl = ss.cv.get("level", "Intermédiaire")
+            res = run_ai(ai.suggest_summary, p_ost, s_ect, l_vl)
+            if res:
+                ss.cv["experiences"] = res + "\n\n" + ss.cv.get("experiences", "")
+                st.toast("✨ Profil professionnel généré !", icon="🎯")
+                st.rerun()
+
     elif step == 3:
         field("Expériences (une par bloc : poste, entreprise, ville, période, missions, résultats)", "experiences", True)
+        
+        # Assistant IA pour transformer une description brute en bullet points pro
+        if st.button("💡 Suggérer des missions percutantes (IA)", key="ai_sugg_bullets"):
+            sync()
+            p_ost = ss.cv.get("poste", "Poste occupé")
+            raw_desc = ss.cv.get("experiences", "")
+            if not raw_desc.strip():
+                st.warning("Écrivez d'abord quelques notes sur vos missions dans le champ ci-dessus.")
+            else:
+                res = run_ai(ai.suggest_bullets, p_ost, raw_desc)
+                if res:
+                    ss.cv["experiences"] = res
+                    st.toast("✨ Missions reformulées avec succès !", icon="🚀")
+                    st.rerun()
+
         field("Formation (diplôme, établissement, ville, période)", "formation", True)
+        
     else:
         field("Compétences (techniques, professionnelles, logiciels, outils)", "skills", True)
+        
+        # Assistant IA pour suggérer des compétences sur mesure
+        if st.button("💡 Suggérer des compétences adaptées (IA)", key="ai_sugg_skills"):
+            sync()
+            p_ost = ss.cv.get("poste", "Poste")
+            s_ect = ss.cv.get("sector", "Secteur")
+            res = run_ai(ai.suggest_skills, p_ost, s_ect)
+            if res:
+                current_skills = ss.cv.get("skills", "")
+                ss.cv["skills"] = (current_skills + "\n" + res).strip()
+                st.toast("✨ Compétences suggérées ajoutées !", icon="⚡")
+                st.rerun()
+
         field("Langues et niveaux", "languages", True)
         field("Compléments (certifications, permis, disponibilité, mobilité, intérêts)",
               "extras", True)
+              
     if step == 3:
         def _improve():
             try:
@@ -261,6 +308,7 @@ def page_cv():
                 st.toast(str(e))
         st.button("✨ Améliorer cette formulation par l'IA", on_click=_improve,
                   key="impr_exp")
+                  
     c1, c2 = st.columns(2)
     if step > 1:
         c1.button("← Précédent", on_click=setstep, args=(step - 1,), key="prev")
