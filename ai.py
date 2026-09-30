@@ -1,10 +1,9 @@
-"""Appels Gemini via SDK officiel google-genai et extraction de texte PDF."""
+"""Appels Gemini via SDK google-generativeai et extraction de texte PDF."""
 import io
 import json
 
+import google.generativeai as genai
 import streamlit as st
-from google import genai
-from google.genai import types
 from pypdf import PdfReader
 
 from config import LANGS
@@ -38,57 +37,50 @@ def _secret(name, default=""):
         return default
 
 
-def _get_client():
+def _init_genai():
     raw_key = str(_secret("GEMINI_API_KEY") or "")
     key = "".join(raw_key.split()).strip("\"'").strip()
     if not key:
         raise AIError("Clé GEMINI_API_KEY absente : ajoutez-la dans Streamlit Secrets.")
-    return genai.Client(api_key=key)
+    genai.configure(api_key=key)
 
 
 def ask(prompt):
-    client = _get_client()
+    _init_genai()
+
+    # Ordre de test des modèles
+    models_to_try = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
     
-    # On récupère le modèle personnalisé si défini, sinon modèle par défaut
-    model_name = str(_secret("GEMINI_MODEL", "gemini-2.0-flash") or "gemini-2.0-flash").strip().strip("\"'").strip()
-    if model_name.startswith("models/"):
-        model_name = model_name[len("models/"):]
+    custom_model = str(_secret("GEMINI_MODEL", "") or "").strip().strip("\"'").strip()
+    if custom_model:
+        if custom_model.startswith("models/"):
+            custom_model = custom_model[len("models/"):]
+        models_to_try.insert(0, custom_model)
 
-    config = types.GenerateContentConfig(
-        system_instruction=RULES,
-        temperature=0.4,
-    )
+    last_error = None
+    for model_name in models_to_try:
+        try:
+            model = genai.GenerativeModel(
+                model_name=model_name,
+                system_instruction=RULES
+            )
+            response = model.generate_content(
+                prompt,
+                generation_config={"temperature": 0.4}
+            )
+            if response and response.text:
+                return response.text.strip()
+        except Exception as e:
+            last_error = e
+            continue
 
-    try:
-        response = client.models.generate_content(
-            model=model_name,
-            contents=prompt,
-            config=config,
-        )
-        if response.text:
-            return response.text.strip()
-        raise AIError("Réponse vide de l'IA. Réessayez.")
-    except Exception as e:
-        err_msg = str(e)
-        if "404" in err_msg or "NOT_FOUND" in err_msg:
-            # Fallback automatique sur gemini-1.5-flash si le modèle du secret échoue
-            try:
-                response = client.models.generate_content(
-                    model="gemini-1.5-flash",
-                    contents=prompt,
-                    config=config,
-                )
-                if response.text:
-                    return response.text.strip()
-            except Exception:
-                pass
-            raise AIError("Modèle introuvable (404). Supprimez la ligne GEMINI_MODEL dans Streamlit Secrets.")
-        elif "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-            raise AIError("Quota IA atteint. Réessayez dans quelques minutes.")
-        elif "400" in err_msg or "401" in err_msg or "403" in err_msg or "API_KEY" in err_msg:
-            raise AIError("Clé API refusée ou invalide. Vérifiez GEMINI_API_KEY dans Streamlit Secrets.")
-        else:
-            raise AIError(f"Erreur IA : {err_msg}")
+    err_msg = str(last_error) if last_error else "Erreur inconnue"
+    if "API_KEY_INVALID" in err_msg or "400" in err_msg or "403" in err_msg:
+        raise AIError("Clé API refusée ou invalide. Regénérez une clé sur Google AI Studio.")
+    if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+        raise AIError("Quota IA atteint. Réessayez dans quelques minutes.")
+    
+    raise AIError(f"Erreur IA ({err_msg}). Vérifiez votre clé API dans Streamlit Secrets.")
 
 
 @st.cache_data(ttl=600, max_entries=5, show_spinner=False)
