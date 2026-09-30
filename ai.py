@@ -30,10 +30,25 @@ FORMAT = (
 )
 
 
+def _secret(name, default=""):
+    try:
+        return st.secrets.get(name, default)
+    except Exception:
+        return default
+
+
+def _init_genai():
+    raw_key = str(_secret("GEMINI_API_KEY") or "")
+    key = "".join(raw_key.split()).strip("\"'").strip()
+    if not key:
+        raise AIError("Clé GEMINI_API_KEY absente : ajoutez-la dans Streamlit Secrets.")
+    genai.configure(api_key=key)
+
+
 def ask(prompt):
     _init_genai()
 
-    # Ordre de test des modèles actifs uniquement
+    # Modèles récents et actifs uniquement (gemini-pro obsolète retiré)
     models_to_try = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
     
     custom_model = str(_secret("GEMINI_MODEL", "") or "").strip().strip("\"'").strip()
@@ -49,23 +64,6 @@ def ask(prompt):
                 model_name=model_name,
                 system_instruction=RULES
             )
-            response = model.generate_content(
-                prompt,
-                generation_config={"temperature": 0.4}
-            )
-            if response and response.text:
-                return response.text.strip()
-        except Exception as e:
-            last_error = e
-            continue
-
-    err_msg = str(last_error) if last_error else "Erreur inconnue"
-    if "API_KEY_INVALID" in err_msg or "400" in err_msg or "403" in err_msg:
-        raise AIError("Clé API refusée ou invalide. Regénérez une clé sur Google AI Studio.")
-    if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-        raise AIError("Quota IA atteint. Réessayez dans quelques minutes.")
-    
-    raise AIError(f"Erreur IA ({err_msg}). Vérifiez votre clé API dans Streamlit Secrets.")
             response = model.generate_content(
                 prompt,
                 generation_config={"temperature": 0.4}
@@ -205,4 +203,4 @@ def from_facts(facts, kind, lang, country):
     return ask(
         f"Rédige en {_lang(lang)} une lettre de motivation naturelle (marché : {country}) "
         f"à partir de ces faits validés uniquement, sans sections '##'.\n{facts}"
-    )
+              )
