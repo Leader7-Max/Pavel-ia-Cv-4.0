@@ -48,8 +48,13 @@ def _init_genai():
 def ask(prompt):
     _init_genai()
 
-    # Modèles récents et actifs uniquement (gemini-pro obsolète retiré)
-    models_to_try = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
+    # Modèles les plus récents et puissants (Gemini 2.5 Pro & Flash)
+    models_to_try = [
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite"
+    ]
     
     custom_model = str(_secret("GEMINI_MODEL", "") or "").strip().strip("\"'").strip()
     if custom_model:
@@ -66,7 +71,7 @@ def ask(prompt):
             )
             response = model.generate_content(
                 prompt,
-                generation_config={"temperature": 0.4}
+                generation_config={"temperature": 0.3}
             )
             if response and response.text:
                 return response.text.strip()
@@ -203,4 +208,4 @@ def from_facts(facts, kind, lang, country):
     return ask(
         f"Rédige en {_lang(lang)} une lettre de motivation naturelle (marché : {country}) "
         f"à partir de ces faits validés uniquement, sans sections '##'.\n{facts}"
-              )
+    )
