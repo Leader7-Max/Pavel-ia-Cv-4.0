@@ -38,6 +38,8 @@ def _conn():
         c.execute("CREATE TABLE IF NOT EXISTS docs(id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT, "
                   "kind TEXT, poste TEXT, tpl TEXT, date TEXT, data TEXT)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_docs_owner ON docs(owner)")
+        c.execute("CREATE TABLE IF NOT EXISTS reviews(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, "
+                  "stars INTEGER, comment TEXT, ts TEXT)")
         c.commit()
         return c
     except (sqlite3.Error, OSError):
@@ -70,11 +72,8 @@ def _rest(method, path, params=None, body=None, prefer=None):
     url = str(_secret("SUPABASE_URL")).strip().rstrip("/") + "/rest/v1/" + path
     key = str(_secret("SUPABASE_KEY")).strip()
     headers = {"apikey": key, "Content-Type": "application/json"}
-    
-    # Prise en charge des clés sb_secret_ et des anciens JWT (eyJ)
-    if key.startswith("eyJ") or key.startswith("sb_secret_"):
+    if key.startswith("eyJ"):
         headers["Authorization"] = "Bearer " + key
-        
     if prefer:
         headers["Prefer"] = prefer
     try:
@@ -140,6 +139,41 @@ def add_like(visitor):
          commit=True)
 
 
+# ------------------------------------------------------------------ avis
+def add_review(name, stars, comment):
+    stars = int(stars)
+    if not 1 <= stars <= 5:
+        raise StorageError("Note invalide.")
+    name, comment = name[:40], comment[:500]
+    if _remote():
+        _rest("POST", "reviews", None, {"name": name, "stars": stars, "comment": comment},
+              "return=minimal")
+        return
+    _run("INSERT INTO reviews(name,stars,comment,ts) VALUES(?,?,?,?)",
+         (name, stars, comment, datetime.datetime.utcnow().isoformat()), commit=True)
+
+
+def list_reviews(limit=8):
+    if _remote():
+        rows = _rest("GET", "reviews", {"select": "name,stars,comment,created", "order": "id.desc",
+                                        "limit": str(int(limit))}).json()
+        return [{"name": x.get("name") or "", "stars": int(x["stars"]), "comment": x.get("comment") or "",
+                 "date": str(x.get("created") or "")[:10]} for x in rows]
+    rows = _run("SELECT name,stars,comment,ts FROM reviews ORDER BY id DESC LIMIT ?",
+                (int(limit),), fetch=True)
+    return [{"name": a or "", "stars": b, "comment": c or "", "date": (d or "")[:10]}
+            for a, b, c, d in rows]
+
+
+def review_stats():
+    if _remote():
+        rows = _rest("GET", "reviews", {"select": "stars", "limit": "5000"}).json()
+        vals = [int(x["stars"]) for x in rows]
+    else:
+        vals = [r[0] for r in _run("SELECT stars FROM reviews", fetch=True)]
+    return (sum(vals) / len(vals) if vals else 0.0), len(vals)
+
+
 # -------------------------------------------------------------- documents
 def _salt():
     return str(_secret("DB_SALT", "pavel-ia-cv-4.0")).encode()
@@ -194,3 +228,4 @@ def delete_doc(code, doc_id):
     if _remote():
         return _r_delete(_owner(code), doc_id)
     _run("DELETE FROM docs WHERE id=? AND owner=?", (doc_id, _owner(code)), commit=True)
+    
