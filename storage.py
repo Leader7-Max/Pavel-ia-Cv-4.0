@@ -70,8 +70,11 @@ def _rest(method, path, params=None, body=None, prefer=None):
     url = str(_secret("SUPABASE_URL")).strip().rstrip("/") + "/rest/v1/" + path
     key = str(_secret("SUPABASE_KEY")).strip()
     headers = {"apikey": key, "Content-Type": "application/json"}
-    if key.startswith("eyJ"):
+    
+    # Prise en charge des clés sb_secret_ et des anciens JWT (eyJ)
+    if key.startswith("eyJ") or key.startswith("sb_secret_"):
         headers["Authorization"] = "Bearer " + key
+        
     if prefer:
         headers["Prefer"] = prefer
     try:
@@ -191,4 +194,3 @@ def delete_doc(code, doc_id):
     if _remote():
         return _r_delete(_owner(code), doc_id)
     _run("DELETE FROM docs WHERE id=? AND owner=?", (doc_id, _owner(code)), commit=True)
-                            
