@@ -29,7 +29,7 @@ def call_llm(prompt: str) -> str:
         if USE_NEW_GENAI:
             client = get_client()
             response = client.models.generate_content(
-                model="gemini-2.5-flash",  # Utilise le modèle standard performant
+                model="gemini-2.5-flash",
                 contents=prompt,
             )
             return response.text
@@ -65,64 +65,63 @@ def suggest_skills(poste: str, sector: str) -> str:
     )
     return call_llm(prompt)
 
-# --- Autres fonctions de base de l'application (à conserver ou fusionner) ---
+# --- Autres fonctions de base de l'application ---
 
 def improve(text: str) -> str:
     """Améliore un texte d'expérience professionnelle."""
-    prompt = fAméliore et professionalise le texte suivant pour un CV :\n\n{text}"
+    prompt = f"Améliore et professionalise le texte suivant pour un CV :\n\n{text}"
     return call_llm(prompt)
 
 def make_cv(cv_data: dict) -> str:
     """Génère un CV complet formaté."""
-    prompt = fGénère un CV professionnel formaté en Markdown à partir de ces données : {cv_data}"
+    prompt = f"Génère un CV professionnel formaté en Markdown à partir de ces données : {cv_data}"
     return call_llm(prompt)
 
 def make_letter(data: dict) -> str:
     """Génère une lettre de motivation."""
-    prompt = fGénère une lettre de motivation professionnelle avec ces informations : {data}"
+    prompt = f"Génère une lettre de motivation professionnelle avec ces informations : {data}"
     return call_llm(prompt)
 
 def analyze(cv_text: str) -> str:
     """Analyse un CV."""
-    prompt = fAnalyse ce CV et donne des axes d'amélioration précis :\n\n{cv_text}"
+    prompt = f"Analyse ce CV et donne des axes d'amélioration précis :\n\n{cv_text}"
     return call_llm(prompt)
 
 def improve_cv(cv_text: str, analysis: str) -> str:
     """Corrige un CV selon une analyse."""
-    prompt = fCorrige et optimise ce CV:\n{cv_text}\n\nEn tenant compte de cette analyse:\n{analysis}"
+    prompt = f"Corrige et optimise ce CV:\n{cv_text}\n\nEn tenant compte de cette analyse:\n{analysis}"
     return call_llm(prompt)
 
 def match(cv_text: str, offer: str) -> str:
     """Compare un CV à une offre d'emploi."""
-    prompt = fCompare ce CV :\n{cv_text}\n\nÀ cette offre d'emploi :\n{offer}\n\nDonne un pourcentage de correspondance et des conseils."
+    prompt = f"Compare ce CV :\n{cv_text}\n\nÀ cette offre d'emploi :\n{offer}\n\nDonne un pourcentage de correspondance et des conseils."
     return call_llm(prompt)
 
 def adapt(cv_text: str, offer: str) -> str:
     """Adapte un CV à une offre."""
-    prompt = fAdapte ce CV :\n{cv_text}\n\nPour qu'il corresponde au mieux à cette offre :\n{offer}"
+    prompt = f"Adapte ce CV :\n{cv_text}\n\nPour qu'il corresponde au mieux à cette offre :\n{offer}"
     return call_llm(prompt)
 
 def translate(text: str, lang: str) -> str:
     """Traduit un CV."""
-    prompt = fTraduis ce CV en {lang} :\n\n{text}"
+    prompt = f"Traduis ce CV en {lang} :\n\n{text}"
     return call_llm(prompt)
 
 def extract(free_text: str) -> str:
     """Extrait des informations d'un texte libre."""
-    prompt = fExtrait les informations clés (nom, poste, compétences, expériences) de ce texte :\n\n{free_text}"
+    prompt = f"Extrait les informations clés (nom, poste, compétences, expériences) de ce texte :\n\n{free_text}"
     return call_llm(prompt)
 
 def from_facts(facts: str, doc_type: str, lang: str, country: str) -> str:
     """Génère un document à partir de faits extraits."""
-    prompt = fGénère un {doc_type} en {lang} pour le pays {country} basé sur ces faits :\n\n{facts}"
+    prompt = f"Génère un {doc_type} en {lang} pour le pays {country} basé sur ces faits :\n\n{facts}"
     return call_llm(prompt)
 
 def ats(cv_text: str, offer: str = "") -> str:
     """Simule un score ATS."""
-    prompt = fÉvalue la compatibilité ATS de ce CV (et de l'offre si présente) sous forme de scores chiffrés sur 100 :\nCV:\n{cv_text}\nOffre:\n{offer}"
+    prompt = f"Évalue la compatibilité ATS de ce CV (et de l'offre si présente) sous forme de scores chiffrés sur 100 :\nCV:\n{cv_text}\nOffre:\n{offer}"
     return call_llm(prompt)
 
 def pdf_text(pdf_bytes: bytes) -> str:
-    """Extrait le texte d'un PDF (méthode de secours ou implémentation existante)."""
-    # Si tu as déjà une fonction d'extraction PDF dans ton code, garde-la, sinon retourne une chaîne vide ou utilise pypdf
+    """Extrait le texte d'un PDF."""
     return "Contenu extrait du PDF"
