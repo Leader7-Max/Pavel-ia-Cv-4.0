@@ -6,7 +6,7 @@ import uuid
 import streamlit as st
 
 import storage
-from config import APP_URL, PAYPAL_URL
+from config import APP_URL, BUILD, PAYPAL_URL
 
 ss = st.session_state
 
@@ -159,8 +159,10 @@ def support_card():
                   on_click=lambda: st.toast("Le lien PayPal arrive bientôt. Merci ! 🙏"))
 
 
-def footer():
-    social_bar()
+def footer(show_social=True):
+    if show_social:
+        social_bar()
     reviews_section()
     support_card()
-  
+    st.caption(f"Pavel IA CV 4.0 · version {BUILD} · stockage : {storage.backend_label()}")
+    
