@@ -6,7 +6,11 @@ import uuid
 import streamlit as st
 
 import storage
-from config import APP_URL, BUILD, PAYPAL_URL
+import config as _cfg
+
+APP_URL = getattr(_cfg, "APP_URL", "")
+BUILD = getattr(_cfg, "BUILD", "?")
+PAYPAL_URL = getattr(_cfg, "PAYPAL_URL", "")
 
 ss = st.session_state
 
