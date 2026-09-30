@@ -11,7 +11,7 @@ from config import COUNTRIES, CV_TYPES, LANGS, LEVELS, PAYPAL_URL, TEMPLATES, ha
 st.set_page_config(page_title="Pavel IA CV Pro", page_icon="📄", layout="centered",
                    initial_sidebar_state="collapsed")
 
-st.markdown("""
+st.markdown('''
 <style>
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(8px); }
@@ -52,7 +52,7 @@ st.markdown("""
 [data-testid="stExpander"] { border-radius: 12px; border: 1px solid #e2e8f0; background: #fff; }
 [data-testid="stDecoration"] { height: 2px !important; background: linear-gradient(90deg, #2563eb, #8b5cf6, #ec4899) !important; }
 </style>
-""", unsafe_allow_html=True)
+''', unsafe_allow_html=True)
 @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
 @keyframes flow{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,.55)}50%{box-shadow:0 0 0 12px rgba(245,158,11,0)}}
