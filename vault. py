@@ -63,5 +63,4 @@ def panel(downloads):
     for d in ss.get("vault_docs", []):
         with st.expander(f"{d['kind']} — {d['poste'] or 'sans titre'} — {d['date']}"):
             downloads(d["text"], d["tpl"], f"{d['kind']}_{d['id']}".replace(" ", "_"), f"v{d['id']}")
-      st.button("🗑️ Supprimer", on_click=_delete, args=(d["id"],), key=f"vdel{d['id']}")
-      
+            st.button("🗑️ Supprimer", on_click=_delete, args=(d["id"],), key=f"vdel{d['id']}")
