@@ -10,49 +10,12 @@ from config import COUNTRIES, CV_TYPES, LANGS, LEVELS, PAYPAL_URL, TEMPLATES, ha
 
 st.set_page_config(page_title="Pavel IA CV Pro", page_icon="📄", layout="centered",
                    initial_sidebar_state="collapsed")
-
-st.markdown('''
+st.markdown("""
 <style>
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(8px); }
-    to { opacity: 1; transform: none; }
-}
 .stApp { background: #f8fafc; }
-.block-container { max-width: 720px; padding-top: 0.5rem; animation: fadeIn 0.3s ease both; }
-
-/* En-tête minimaliste ultra-fin et élégant */
-.hero-minimal {
-    display: flex; align-items: center; gap: 1rem; background: #fff; border: 1px solid #e2e8f0;
-    padding: 0.75rem 1rem; border-radius: 16px; margin-bottom: 0.6rem; box-shadow: 0 2px 6px rgba(0,0,0,0.02);
-}
-.hero-minimal .texts h1 { margin: 0; font-size: 1.25rem; font-weight: 800; color: #0f172a; letter-spacing: -0.3px; }
-.hero-minimal .texts h1 span { color: #6366f1; }
-.hero-minimal .texts p { margin: 0; font-size: 0.8rem; color: #64748b; }
-
-/* Boutons modernes ultra-plats et dynamiques */
-.stButton > button, .stDownloadButton > button {
-    width: 100%; min-height: 3rem; border: none; border-radius: 12px;
-    background: linear-gradient(135deg, #2563eb, #4f46e5); color: #fff; font-weight: 700; font-size: 0.9rem;
-    box-shadow: 0 4px 12px rgba(37,99,235,0.15); transition: all 0.2s ease;
-}
-.stButton > button p, .stDownloadButton > button p { color: #fff !important; }
-.stButton > button:hover, .stDownloadButton > button:hover {
-    transform: translateY(-1px); filter: brightness(1.1);
-    box-shadow: 0 6px 16px rgba(79,70,229,0.25);
-}
-
-/* Cadres métriques (les 0) ultra-plats et discrets */
-[data-testid="stMetric"] { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 0.2rem 0.6rem !important; box-shadow: none; }
-[data-testid="stMetricLabel"] { font-size: 0.7rem !important; color: #64748b !important; text-transform: uppercase; letter-spacing: 0.5px; }
-[data-testid="stMetricValue"] { font-size: 1.1rem !important; font-weight: 800 !important; color: #0f172a !important; }
-
-.stTextInput input, .stTextArea textarea, .stSelectbox [data-baseweb="select"] > div {
-    border-radius: 10px !important; border: 1px solid #cbd5e1 !important; background: #fff !important;
-}
-[data-testid="stExpander"] { border-radius: 12px; border: 1px solid #e2e8f0; background: #fff; }
-[data-testid="stDecoration"] { height: 2px !important; background: linear-gradient(90deg, #2563eb, #8b5cf6, #ec4899) !important; }
+.block-container { max-width: 760px; padding-top: 1rem; }
 </style>
-''', unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
 @keyframes flow{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,.55)}50%{box-shadow:0 0 0 12px rgba(245,158,11,0)}}
