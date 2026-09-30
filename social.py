@@ -1,4 +1,4 @@
-"""J'aime, partage, avis en étoiles et soutien PayPal."""
+"""J'aime, avis en étoiles, partage et soutien PayPal."""
 import re
 import urllib.parse
 import uuid
@@ -50,7 +50,10 @@ def _clean_name(name):
     return re.sub(r"[^\w '\-.]", "", str(name)).replace("_", "").strip()[:40]
 
 
-# ---------------------------------------------------------------- J'aime
+def _toggle(key):
+    ss[key] = not ss.get(key, False)
+
+
 def _like():
     try:
         storage.add_like(ss["visitor"])
@@ -61,10 +64,7 @@ def _like():
         st.toast(str(e))
 
 
-def _toggle_share():
-    ss["share_open"] = not ss.get("share_open", False)
-
-
+# ---------------------------------------------------------------- Partage
 def share_panel():
     url = app_url()
     if not url:
@@ -72,34 +72,23 @@ def share_panel():
         return
     msg = "Je crée mon CV et ma lettre de motivation avec Pavel IA CV 4.0, c'est gratuit : "
     q, u = urllib.parse.quote(msg + url), urllib.parse.quote(url)
-    st.caption("Copiez le lien (icône à droite) :")
-    st.code(url, language=None)
-    c1, c2 = st.columns(2)
-    c1.link_button("💬 WhatsApp", f"https://wa.me/?text={q}", use_container_width=True)
-    c2.link_button("✈️ Telegram", f"https://t.me/share/url?url={u}&text={urllib.parse.quote(msg)}",
-                   use_container_width=True)
-    c1.link_button("📘 Facebook", f"https://www.facebook.com/sharer/sharer.php?u={u}",
-                   use_container_width=True)
-    c2.link_button("💼 LinkedIn", f"https://www.linkedin.com/sharing/share-offsite/?url={u}",
-                   use_container_width=True)
-    c1.link_button("🐦 X", f"https://twitter.com/intent/tweet?text={q}", use_container_width=True)
-    c2.link_button("✉️ SMS", f"sms:?&body={q}", use_container_width=True)
+    with st.container(border=True):
+        st.markdown("**📤 Inviter mes amis**")
+        st.caption("Copiez le lien (icône à droite) :")
+        st.code(url, language=None)
+        c1, c2 = st.columns(2)
+        c1.link_button("💬 WhatsApp", f"https://wa.me/?text={q}", use_container_width=True)
+        c2.link_button("✈️ Telegram", f"https://t.me/share/url?url={u}&text={urllib.parse.quote(msg)}",
+                       use_container_width=True)
+        c1.link_button("📘 Facebook", f"https://www.facebook.com/sharer/sharer.php?u={u}",
+                       use_container_width=True)
+        c2.link_button("💼 LinkedIn", f"https://www.linkedin.com/sharing/share-offsite/?url={u}",
+                       use_container_width=True)
+        c1.link_button("🐦 X", f"https://twitter.com/intent/tweet?text={q}", use_container_width=True)
+        c2.link_button("✉️ SMS", f"sms:?&body={q}", use_container_width=True)
 
 
-def social_bar():
-    ss.setdefault("visitor", uuid.uuid4().hex)
-    liked = ss.get("liked", False)
-    st.markdown('<div class="social"><b>❤️ Vous aimez Pavel IA ?</b><br>Likez, partagez et invitez vos '
-                'amis à créer leur CV.</div>', unsafe_allow_html=True)
-    c1, c2 = st.columns(2)
-    c1.button(f"{'❤️' if liked else '🤍'} J'aime · {_likes()}", on_click=_like, key="like_btn",
-              disabled=liked)
-    c2.button("📤 PARTAGER", on_click=_toggle_share, key="share_btn")
-    if ss.get("share_open"):
-        share_panel()
-
-
-# ------------------------------------------------------------ Avis / étoiles
+# ------------------------------------------------------------------- Avis
 def _submit_review():
     stars = ss.get("rv_stars")
     if stars is None:
@@ -115,12 +104,26 @@ def _submit_review():
         st.toast(str(e))
         return
     ss["reviewed"] = True
+    ss["rv_open"] = False
     _reviews.clear()
     st.toast("Merci pour votre avis !", icon="🌟")
 
 
+def review_form():
+    if ss.get("reviewed"):
+        st.success("Merci pour votre avis !")
+        return
+    with st.container(border=True):
+        st.markdown("**✍️ Votre avis**")
+        st.feedback("stars", key="rv_stars")
+        st.text_input("Votre prénom (facultatif)", max_chars=40, key="rv_name")
+        st.text_area("Votre commentaire (facultatif)", max_chars=500, key="rv_comment",
+                     placeholder="Ce que vous avez aimé, ce qu'on peut améliorer...")
+        st.button("⭐ ENVOYER MON AVIS", on_click=_submit_review, key="rv_submit")
+
+
 def reviews_section():
-    st.markdown("#### ⭐ Avis et commentaires")
+    st.markdown('<h3 class="sec">⭐ Avis des utilisateurs</h3>', unsafe_allow_html=True)
     try:
         avg, n, items = _reviews()
     except storage.StorageError:
@@ -129,15 +132,8 @@ def reviews_section():
     if n:
         st.markdown(f'<div class="rating">⭐ {avg:.1f} / 5<small>{n} avis</small></div>',
                     unsafe_allow_html=True)
-    if ss.get("reviewed"):
-        st.success("Merci pour votre avis !")
     else:
-        with st.expander("✍️ Donner mon avis", expanded=not items):
-            st.feedback("stars", key="rv_stars")
-            st.text_input("Votre prénom (facultatif)", max_chars=40, key="rv_name")
-            st.text_area("Votre commentaire (facultatif)", max_chars=500, key="rv_comment",
-                         placeholder="Ce que vous avez aimé, ce qu'on peut améliorer...")
-            st.button("⭐ ENVOYER MON AVIS", on_click=_submit_review, key="rv_submit")
+        st.caption("Soyez le premier à laisser un avis (bouton 💬 Avis).")
     for r in items:
         with st.container(border=True):
             stars = max(1, min(5, int(r["stars"])))
@@ -145,6 +141,22 @@ def reviews_section():
             st.markdown("⭐" * stars + "☆" * (5 - stars) + f" **{who}** · {r['date']}")
             if r["comment"]:
                 st.text(r["comment"])
+
+
+# ------------------------------------------------------- Barre J'aime/Avis/Partage
+def social_bar():
+    ss.setdefault("visitor", uuid.uuid4().hex)
+    liked = ss.get("liked", False)
+    st.markdown('<div class="social"><b>❤️ Vous aimez Pavel IA ?</b><br>Likez, donnez votre avis et '
+                'partagez-le à vos amis.</div>', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns(3)
+    c1.button(f"{'❤️' if liked else '🤍'} {_likes()}", on_click=_like, key="like_btn", disabled=liked)
+    c2.button("💬 Avis", on_click=_toggle, args=("rv_open",), key="rv_btn")
+    c3.button("📤 Partager", on_click=_toggle, args=("share_open",), key="share_btn")
+    if ss.get("rv_open"):
+        review_form()
+    if ss.get("share_open"):
+        share_panel()
 
 
 # ---------------------------------------------------------------- PayPal
