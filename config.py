@@ -29,4 +29,7 @@ TEMPLATES = {
 }
 
 # Lien PayPal : renseignez-le ici, ou (mieux) dans Streamlit Secrets : PAYPAL_URL = "https://paypal.me/..."
-PAYPAL_URL = "https://www.paypal.me/Pavelia38"
+PAYPAL_URL = ""
+
+# Adresse publique de l'app (facultatif : sinon détection automatique). Ex. : https://mon-app.streamlit.app
+APP_URL = "https://pavel-ia-cv-40-h737krcujmyodstbukguzw.streamlit.app"
