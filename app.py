@@ -95,7 +95,7 @@ def run_ai(fn, *args):
 
 
 def text_counter(text, min_chars=0):
-    """Affiche un compteur dynamique de caractères et de mots avec un code couleur (Amélioration ingénieur)."""
+    """Affiche un compteur dynamique de caractères et de mots avec un code couleur."""
     chars = len(text)
     words = len(text.split()) if text.strip() else 0
     if min_chars > 0:
@@ -162,8 +162,9 @@ def result_block(k, kind, poste=""):
         return
     st.text_area("Résultat (modifiable)", key=k, height=380)
     
-    # Information de copie rapide astucieuse et gratuite
-    st.info("💡 Astuce : Vous pouvez sélectionner tout le texte ci-dessus pour le copier rapidement.")
+    # Bloc de copie rapide natif (bouton copier inclus automatiquement par Streamlit)
+    with st.expander("📋 Voir le texte formaté pour copie instantanée"):
+        st.code(ss[k], language="markdown")
     
     tpl = st.selectbox("Modèle de mise en page", list(TEMPLATES), key="tpl_" + k,
                        format_func=lambda t: f"{t} — {TEMPLATES[t]}")
@@ -329,7 +330,6 @@ def page_adapt():
     cv = import_cv("ad")
     offer = st.text_area("Collez l'annonce", height=180, key="ad_offer")
     
-    # -> Compteur intégré pour l'offre d'emploi
     text_counter(ss.get("ad_offer", ""), min_chars=30)
 
     ready = len(cv.strip()) >= 50 and len(offer.strip()) >= 30
@@ -375,7 +375,6 @@ def page_express():
     free = st.text_area("Votre texte libre", height=160, key="ex_text",
                         placeholder="Ex: Je cherche un emploi de développeur web à Lyon, 3 ans d'expérience...")
     
-    # -> Compteur intégré pour le texte libre
     text_counter(ss.get("ex_text", ""), min_chars=20)
 
     lang = st.selectbox("Langue", list(LANGS), key="ex_lang")
