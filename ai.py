@@ -37,28 +37,44 @@ def _secret(name, default=""):
         return default
 
 
+FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-2.0-flash"]
+
+
+def _models():
+    raw = str(_secret("GEMINI_MODEL", "") or "").strip().strip("\"'").strip()
+    if raw.startswith("models/"):
+        raw = raw[len("models/"):]
+    out = [raw] if raw else []
+    return out + [m for m in FALLBACK_MODELS if m not in out]
+
+
 def ask(prompt):
-    key = _secret("GEMINI_API_KEY")
+    key = str(_secret("GEMINI_API_KEY") or "").strip().strip("\"'").strip()
     if not key:
         raise AIError("Clé GEMINI_API_KEY absente : ajoutez-la dans Streamlit Secrets.")
-    model = _secret("GEMINI_MODEL", "gemini-1.5-flash")
-    url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent"
-ask(prompt)
     body = {
         "systemInstruction": {"parts": [{"text": RULES}]},
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.4},
     }
-    try:
-        r = requests.post(url, json=body, headers={"x-goog-api-key": key}, timeout=60)
-    except requests.Timeout:
-        raise AIError("Le service IA met trop de temps à répondre. Réessayez.")
-    except requests.RequestException:
-        raise AIError("Connexion au service IA impossible. Vérifiez votre réseau.")
+    r = None
+    for model in _models():
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        try:
+            r = requests.post(url, json=body, headers={"x-goog-api-key": key}, timeout=60)
+        except requests.Timeout:
+            raise AIError("Le service IA met trop de temps à répondre. Réessayez.")
+        except requests.RequestException:
+            raise AIError("Connexion au service IA impossible. Vérifiez votre réseau.")
+        if r.status_code != 404:
+            break
+    if r.status_code == 404:
+        raise AIError("Aucun modèle Gemini disponible (404). Vérifiez ou supprimez le secret "
+                      "GEMINI_MODEL, ou utilisez un nom valide comme gemini-flash-latest.")
     if r.status_code == 429:
         raise AIError("Quota IA atteint. Réessayez dans quelques minutes.")
     if r.status_code in (400, 401, 403):
-        raise AIError("Clé API ou modèle refusé par le service IA. Vérifiez la configuration.")
+        raise AIError("Clé API refusée ou requête invalide. Vérifiez GEMINI_API_KEY.")
     if r.status_code != 200:
         raise AIError(f"Erreur du service IA ({r.status_code}). Réessayez.")
     try:
@@ -190,5 +206,5 @@ def from_facts(facts, kind, lang, country):
     return ask(
         f"Rédige en {_lang(lang)} une lettre de motivation naturelle (marché : {country}) "
         f"à partir de ces faits validés uniquement, sans sections '##'.\n{facts}"
-    )
+        )
     
