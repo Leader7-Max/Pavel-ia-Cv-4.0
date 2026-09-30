@@ -1,10 +1,9 @@
-"""Appels Gemini via le SDK officiel google-genai et extraction de texte PDF."""
+"""Appels Gemini via le SDK google-generativeai et extraction de texte PDF."""
 import io
 import json
 
+import google.generativeai as genai
 import streamlit as st
-from google import genai
-from google.genai import types
 from pypdf import PdfReader
 
 from config import LANGS
@@ -38,53 +37,40 @@ def _secret(name, default=""):
         return default
 
 
-def _get_client():
+def _configure():
     raw_key = str(_secret("GEMINI_API_KEY") or "")
     key = "".join(raw_key.split()).strip("\"'").strip()
     if not key:
         raise AIError("Clé GEMINI_API_KEY absente : ajoutez-la dans Streamlit Secrets.")
-    # Forcer l'utilisation de l'API v1 stable
-    return genai.Client(api_key=key, http_options={"api_version": "v1"})
+    genai.configure(api_key=key)
 
 
 def ask(prompt):
-    client = _get_client()
+    _configure()
 
-    # Liste des modèles valides sur l'API v1 (sans aucun ancien modèle)
-    models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash"]
+    # Modèle actif officiel sans v1beta
+    model_name = str(_secret("GEMINI_MODEL", "gemini-2.5-flash") or "").strip().strip("\"'").strip()
+    if model_name.startswith("models/"):
+        model_name = model_name[len("models/"):]
 
-    custom_model = str(_secret("GEMINI_MODEL", "") or "").strip().strip("\"'").strip()
-    if custom_model:
-        if custom_model.startswith("models/"):
-            custom_model = custom_model[len("models/"):]
-        models_to_try.insert(0, custom_model)
+    try:
+        model = genai.GenerativeModel(
+            model_name=model_name,
+            system_instruction=RULES,
+            generation_config={"temperature": 0.3},
+        )
+        response = model.generate_content(prompt)
+        if response and response.text:
+            return response.text.strip()
+    except Exception as e:
+        err_msg = str(e)
+        if "API_KEY" in err_msg or "400" in err_msg or "403" in err_msg:
+            raise AIError("Clé API refusée ou invalide. Vérifiez GEMINI_API_KEY dans Streamlit Secrets.")
+        if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+            raise AIError("Quota IA atteint. Réessayez dans quelques minutes.")
+        raise AIError(f"Erreur IA ({err_msg}). Vérifiez la clé API dans Streamlit Secrets.")
 
-    config = types.GenerateContentConfig(
-        system_instruction=RULES,
-        temperature=0.3,
-    )
-
-    last_error = None
-    for model_name in models_to_try:
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=config,
-            )
-            if response and response.text:
-                return response.text.strip()
-        except Exception as e:
-            last_error = e
-            continue
-
-    err_msg = str(last_error) if last_error else "Erreur inconnue"
-    if "API_KEY" in err_msg or "400" in err_msg or "403" in err_msg:
-        raise AIError("Clé API refusée ou invalide. Vérifiez GEMINI_API_KEY dans Streamlit Secrets.")
-    if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-        raise AIError("Quota IA atteint. Réessayez dans quelques minutes.")
-
-    raise AIError(f"Erreur IA ({err_msg}). Vérifiez la clé API dans Streamlit Secrets.")
+    raise AIError("Réponse vide de l'IA. Réessayez.")
 
 
 @st.cache_data(ttl=600, max_entries=5, show_spinner=False)
@@ -185,7 +171,7 @@ def adapt(cv, offer):
 
 def translate(text, lang):
     return ask(
-        f"Traduis en {_lang(lang)} en conservant strictement le sens, les informations "
+        f"Traduis en {_lang(lang)} en conservant strictly le sens, les informations "
         "et la structure ('##', puces). N'ajoute rien.\n" + text
     )
 
@@ -207,4 +193,4 @@ def from_facts(facts, kind, lang, country):
     return ask(
         f"Rédige en {_lang(lang)} une lettre de motivation naturelle (marché : {country}) "
         f"à partir de ces faits validés uniquement, sans sections '##'.\n{facts}"
-    )
+        )
