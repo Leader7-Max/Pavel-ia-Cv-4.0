@@ -27,3 +27,6 @@ TEMPLATES = {
     "EUROPEAN": "Structure adaptée au format européen",
     "ATS": "Simple, lisible par les systèmes de recrutement",
 }
+
+# Lien PayPal : renseignez-le ici, ou (mieux) dans Streamlit Secrets : PAYPAL_URL = "https://paypal.me/..."
+PAYPAL_URL = ""
