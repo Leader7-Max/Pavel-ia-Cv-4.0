@@ -48,7 +48,7 @@ def _configure():
 def ask(prompt):
     _configure()
 
-    # Modèles Gemini valides testés dans l'ordre de priorité
+    # Ordre de test des modèles natifs compatibles
     models_to_try = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.0-flash-lite"]
 
     custom_model = str(_secret("GEMINI_MODEL", "") or "").strip().strip("\"'").strip()
@@ -179,7 +179,7 @@ def adapt(cv, offer):
 
 def translate(text, lang):
     return ask(
-        f"Traduis en {_lang(lang)} en conservant strictly le sens, les informations "
+        f"Traduis en {_lang(lang)} en conservant strictement le sens, les informations "
         "et la structure ('##', puces). N'ajoute rien.\n" + text
     )
 
@@ -201,4 +201,4 @@ def from_facts(facts, kind, lang, country):
     return ask(
         f"Rédige en {_lang(lang)} une lettre de motivation naturelle (marché : {country}) "
         f"à partir de ces faits validés uniquement, sans sections '##'.\n{facts}"
-    )
+)
