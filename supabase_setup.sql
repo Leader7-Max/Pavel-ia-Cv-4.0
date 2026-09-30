@@ -15,3 +15,14 @@ create index if not exists idx_docs_owner on docs(owner);
 -- Seule la clé secrète (service_role) stockée dans Streamlit Secrets peut lire/écrire.
 alter table likes enable row level security;
 alter table docs enable row level security;
+
+-- Avis et étoiles (à exécuter aussi si vous aviez déjà créé les tables ci-dessus)
+create table if not exists reviews (
+  id bigserial primary key,
+  name text,
+  stars int not null check (stars between 1 and 5),
+  comment text,
+  created timestamptz default now()
+);
+alter table reviews enable row level security;
+-- Pour supprimer un commentaire abusif : delete from reviews where id = 123;
