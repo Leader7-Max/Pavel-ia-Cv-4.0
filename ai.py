@@ -41,8 +41,9 @@ def ask(prompt):
     key = _secret("GEMINI_API_KEY")
     if not key:
         raise AIError("Clé GEMINI_API_KEY absente : ajoutez-la dans Streamlit Secrets.")
-    model = _secret("GEMINI_MODEL", "gemini-1.5-pro")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    model = _secret("GEMINI_MODEL", "gemini-1.5-flash")
+url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent"
+
     body = {
         "systemInstruction": {"parts": [{"text": RULES}]},
         "contents": [{"parts": [{"text": prompt}]}],
