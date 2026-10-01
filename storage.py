@@ -1,6 +1,7 @@
 """Stockage SQLite : compteur de likes (global) et documents chiffrés (par code personnel)."""
 import base64
 import datetime
+import functools
 import hashlib
 import os
 import sqlite3
@@ -179,10 +180,12 @@ def _salt():
     return str(_secret("DB_SALT", "pavel-ia-cv-4.0")).encode()
 
 
+@functools.lru_cache(maxsize=16)
 def _owner(code):
     return hashlib.pbkdf2_hmac("sha256", code.encode(), _salt() + b"owner", 100_000).hex()
 
 
+@functools.lru_cache(maxsize=16)
 def _fernet(code):
     try:
         from cryptography.fernet import Fernet
