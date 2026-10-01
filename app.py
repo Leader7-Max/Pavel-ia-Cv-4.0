@@ -1,15 +1,42 @@
 """PAVEL IA CV PRO — application Streamlit (mobile-first, design premium)."""
 import datetime
+import importlib
 import re
 
 import streamlit as st
 
 import ai
 import exporters
-import social
-import ui
-import vault
 from config import COUNTRIES, CV_TYPES, LANGS, LEVELS, TEMPLATES, has
+
+MISSING = []
+
+
+class _Safe:
+    """Charge un module optionnel. S'il manque ou est obsolète, l'app continue (fonction désactivée)
+    et le problème est signalé en bas de page."""
+
+    def __init__(self, name):
+        self._name = name
+        try:
+            self._mod = importlib.import_module(name)
+        except Exception as e:
+            self._mod = None
+            MISSING.append(f"{name}.py introuvable ou en erreur ({type(e).__name__})")
+
+    def __getattr__(self, attr):
+        f = getattr(self._mod, attr, None) if self._mod else None
+        if f is None:
+            note = f"{self._name}.py à mettre à jour ({attr} absent)"
+            if self._mod and note not in MISSING:
+                MISSING.append(note)
+            return lambda *a, **k: False
+        return f
+
+
+social = _Safe("social")
+ui = _Safe("ui")
+vault = _Safe("vault")
 
 st.set_page_config(page_title="Pavel IA CV Pro", page_icon="📄", layout="centered",
                    initial_sidebar_state="collapsed")
@@ -105,6 +132,8 @@ def fill_profile():
         st.toast("✨ Profil rédigé — relisez-le et modifiez-le.", icon="🎯")
     except ai.AIError as e:
         st.toast(str(e))
+    except Exception:
+        st.toast("Fonction indisponible : mettez à jour ai.py.")
 
 
 def improve_field(key, mode):
@@ -118,6 +147,8 @@ def improve_field(key, mode):
         st.toast("✨ Texte reformulé — vérifiez qu'il reste exact.", icon="🚀")
     except ai.AIError as e:
         st.toast(str(e))
+    except Exception:
+        st.toast("Fonction indisponible : mettez à jour ai.py.")
 
 
 def fetch_skills():
@@ -126,6 +157,8 @@ def fetch_skills():
         ss["sugg_skills"] = ai.suggest_skills(ss.cv.get("poste", ""), ss.cv.get("sector", ""))
     except ai.AIError as e:
         st.toast(str(e))
+    except Exception:
+        st.toast("Fonction indisponible : mettez à jour ai.py.")
 
 
 def import_cv(k):
@@ -439,4 +472,5 @@ PAGES = {"home": home, "cv": page_cv, "letter": page_letter, "analyze": page_ana
 PAGES.get(ss.page, home)()
 st.divider()
 social.footer(ss.page != "home")
-                                             
+if MISSING:
+    st.warning("⚠️ Fichiers à vérifier dans GitHub : " + " · ".join(MISSING))
