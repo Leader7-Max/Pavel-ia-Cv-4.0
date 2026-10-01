@@ -1,6 +1,6 @@
 streamlit>=1.40,<2
 requests>=2.31,<3
 pypdf>=4.0,<6
-fpdf2>=2.7.9,<3
+reportlab>=4.0,<5
 python-docx>=1.1,<2
-cryptography
+cryptography>=42
