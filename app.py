@@ -252,11 +252,8 @@ def home():
              ("🤖 ANALYSER MON CV", "analyze"), ("🎯 ADAPTER À UNE OFFRE", "adapt"),
              ("🌍 TRADUIRE MON CV", "translate"), ("🚀 CV EXPRESS", "express"),
              ("📁 MES DOCUMENTS", "docs")]
-    for i in range(0, len(items), 2):
-        row = items[i:i + 2]
-        cols = st.columns(2) if len(row) == 2 else [st.container()]
-        for col, (label, p) in zip(cols, row):
-            col.button(label, on_click=go, args=(p,), key="home_" + p)
+    for label, p in items:
+        st.button(label, on_click=go, args=(p,), key="home_" + p)
     ui.steps()
     with st.expander("🔒 Confidentialité"):
         st.write("Vos informations sont utilisées pour générer et personnaliser vos documents. "
@@ -474,3 +471,4 @@ st.divider()
 social.footer(ss.page != "home")
 if MISSING:
     st.warning("⚠️ Fichiers à vérifier dans GitHub : " + " · ".join(MISSING))
+        
