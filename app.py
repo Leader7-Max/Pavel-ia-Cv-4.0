@@ -471,3 +471,4 @@ st.divider()
 social.footer(ss.page != "home")
 if MISSING:
     st.warning("⚠️ Fichiers à vérifier dans GitHub : " + " · ".join(MISSING))
+        
