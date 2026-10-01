@@ -35,4 +35,4 @@ PAYPAL_URL = ""
 APP_URL = "https://pavel-ia-cv-40-h737krcujmyodstbukguzw.streamlit.app"
 
 # Repère de version affiché en bas de page (permet de vérifier que le bon code est en ligne)
-BUILD = "2026.09.30-r8"
+BUILD = "2026.10.01-r9"
