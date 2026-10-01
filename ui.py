@@ -1,4 +1,6 @@
 """Identité visuelle : logo, en-tête et effets CSS de Pavel IA CV 4.0."""
+import urllib.parse
+
 import streamlit as st
 
 LOGO = ('<svg width="{s}" height="{s}" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">'
@@ -140,7 +142,7 @@ def inject_css():
         f".st-key-home_{k} button{{background:linear-gradient(135deg,{_COLORS[k]})}}"
         f".st-key-home_{k}{{animation:fadeUp .55s {0.12 + i * 0.07:.2f}s ease both}}"
         for i, k in enumerate(_HOME))
-    st.markdown("<style>" + CSS + delays + "</style>", unsafe_allow_html=True)
+    st.markdown("<style>" + CSS + delays + _css_v2() + "</style>", unsafe_allow_html=True)
 
 
 def hero():
@@ -178,4 +180,52 @@ def steps():
                 '<div class="step"><i>2</i><b>L\'IA rédige</b><span>sans rien inventer</span></div>'
                 '<div class="step"><i>3</i><b>Téléchargez</b><span>PDF, Word ou TXT</span></div></div>',
                 unsafe_allow_html=True)
-        
+
+
+# Logos (SVG) : réalisés pour l'app. Pour utiliser les fichiers officiels, remplacez les valeurs ci-dessous.
+ICONS = {
+    'heart_outline': "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 21 C12 21 3 15 3 8.8 C3 6 5.2 4 7.6 4 C9.4 4 11 5 12 6.6 C13 5 14.6 4 16.4 4 C18.8 4 21 6 21 8.8 C21 15 12 21 12 21 Z' fill='none' stroke='white' stroke-width='2' stroke-linejoin='round'/></svg>",
+    'heart_filled': "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 21 C12 21 3 15 3 8.8 C3 6 5.2 4 7.6 4 C9.4 4 11 5 12 6.6 C13 5 14.6 4 16.4 4 C18.8 4 21 6 21 8.8 C21 15 12 21 12 21 Z' fill='white'/></svg>",
+    'star': "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><polygon points='12.00,2.40 14.53,9.12 21.70,9.45 16.09,13.93 18.00,20.85 12.00,16.90 6.00,20.85 7.91,13.93 2.30,9.45 9.47,9.12' fill='white'/></svg>",
+    'whatsapp': "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='#25D366'/><circle cx='16' cy='15.4' r='9.4' fill='white'/><polygon points='6.8,25.6 8.9,19.2 13.2,23.6' fill='white'/><path d='M12.1 11.6 C11.6 12.2 11.5 13.4 12.3 15 C13.4 17.2 15.1 18.9 17.3 20 C18.9 20.8 20.1 20.7 20.6 20.1 L20.6 18.7 L18.4 17.4 L17.3 18.1 C16.1 17.5 14.9 16.3 14.3 15.1 L15 14 L13.7 11.8 Z' fill='#25D366'/></svg>",
+    'telegram': "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='#229ED9'/><polygon points='25.2,8.6 6.8,15.7 13.2,18.2 21.8,11.6 15.4,19.4 15.6,23.6 18.5,20.8 22.6,23.9' fill='white'/></svg>",
+    'facebook': "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='#1877F2'/><path d='M17.6 26 V17.4 H20.5 L21 14 H17.6 V12 C17.6 11 18 10.3 19.4 10.3 H21 V7.2 C20.7 7.2 19.6 7 18.4 7 C15.7 7 14 8.6 14 11.5 V14 H11 V17.4 H14 V26 Z' fill='white'/></svg>",
+    'linkedin': "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='#0A66C2'/><rect x='6.5' y='12.5' width='4' height='13' fill='white'/><circle cx='8.5' cy='8.6' r='2.4' fill='white'/><path d='M13.5 12.5 H17.3 V14.3 C18 13.1 19.3 12.2 21.3 12.2 C24.9 12.2 25.7 14.5 25.7 17.6 V25.5 H21.7 V18.5 C21.7 16.8 21.6 15.5 19.8 15.5 C18 15.5 17.6 16.7 17.6 18.5 V25.5 H13.5 Z' fill='white'/></svg>",
+    'x': "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='black'/><line x1='9' y1='8.5' x2='23' y2='23.5' stroke='white' stroke-width='2.6' stroke-linecap='round'/><line x1='23' y1='8.5' x2='9' y2='23.5' stroke='white' stroke-width='2.6' stroke-linecap='round'/></svg>",
+    'sms': "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='#34C759'/><ellipse cx='16' cy='14.6' rx='9.6' ry='7.4' fill='white'/><polygon points='8.6,24.4 11,18.4 15,20.6' fill='white'/></svg>",
+    'paypal_mono': "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 28'><path d='M8.50 2.00 H18.00 C22.50 2.00 25.10 4.50 24.50 8.30 C23.80 13.00 20.50 15.20 16.30 15.20 H13.10 L11.70 24.00 H6.30 Z' fill='#009cde'/><path d='M3.60 4.00 H13.10 C17.60 4.00 20.20 6.50 19.60 10.30 C18.90 15.00 15.60 17.20 11.40 17.20 H8.20 L6.80 26.00 H1.40 Z' fill='#003087'/></svg>",
+    'paypal_word': "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 112 30'><g transform='translate(1 1) scale(.95)'><path d='M8.50 2.00 H18.00 C22.50 2.00 25.10 4.50 24.50 8.30 C23.80 13.00 20.50 15.20 16.30 15.20 H13.10 L11.70 24.00 H6.30 Z' fill='#009cde'/><path d='M3.60 4.00 H13.10 C17.60 4.00 20.20 6.50 19.60 10.30 C18.90 15.00 15.60 17.20 11.40 17.20 H8.20 L6.80 26.00 H1.40 Z' fill='#003087'/></g><text x='30' y='22' font-family='Verdana,Arial,sans-serif' font-weight='bold' font-style='italic' font-size='20' fill='#003087'>Pay</text><text x='67' y='22' font-family='Verdana,Arial,sans-serif' font-weight='bold' font-style='italic' font-size='20' fill='#009cde'>Pal</text></svg>",
+}
+
+def _uri(name):
+    return 'url("data:image/svg+xml,' + urllib.parse.quote(ICONS[name], safe="") + '")'
+
+
+def _css_v2():
+    """Corrections de mise en page (mobile) et logos. Les couleurs, dégradés et effets existants sont conservés."""
+    links = [('a[href*="wa.me"]', "whatsapp"), ('a[href*="t.me"]', "telegram"),
+             ('a[href*="facebook.com"]', "facebook"), ('a[href*="linkedin.com"]', "linkedin"),
+             ('a[href*="twitter.com"]', "x"), ('a[href^="sms:"]', "sms"), ('a[href*="paypal"]', "paypal_mono")]
+    link_css = "".join(
+        '[data-testid="stLinkButton"] ' + sel + '::before{content:"";flex:none;width:1.3em;height:1.3em;'
+        'margin-right:.55rem;background:' + _uri(name) + ' center/contain no-repeat}' for sel, name in links)
+    css = """
+.block-container{padding-top:calc(3.4rem + env(safe-area-inset-top,0px))!important}
+header[data-testid="stHeader"]{background:transparent!important}
+.hero{margin-top:0}
+.stats{gap:.6rem;margin:.1rem 0 .7rem}
+.stat{display:flex;align-items:center;justify-content:center;gap:.5rem;padding:.4rem .7rem;border-radius:14px;
+ box-shadow:0 3px 10px rgba(15,23,42,.06)}
+.stat:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(79,70,229,.15)}
+.stat b{display:inline;font-size:1.2rem;line-height:1}
+.stat span{font-size:.8rem;line-height:1}
+[class*="st-key-like_btn"] button,[class*="st-key-rv_btn"] button,[class*="st-key-share_btn"] button{
+ height:3rem!important;min-height:3rem!important;padding:0 .25rem!important;font-size:.9rem!important;
+ display:flex;align-items:center;justify-content:center}
+[class*="st-key-like_btn"] button p,[class*="st-key-rv_btn"] button p,[class*="st-key-share_btn"] button p{
+ display:flex;align-items:center;justify-content:center;gap:.4rem;margin:0;white-space:nowrap}
+[class*="st-key-like_btn"] button p::before,[class*="st-key-rv_btn"] button p::before,
+[class*="st-key-share_btn"] button p::before{content:"";flex:none;width:1.2em;height:1.2em;
+ background-repeat:no-repeat;background-position:center;background-size:contain}
+.st-key-like_btn button p::before{background-image:@HEART@}
+.st-key-lik
