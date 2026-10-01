@@ -81,15 +81,15 @@ def share_panel():
         st.caption("Copiez le lien (icône à droite) :")
         st.code(url, language=None)
         c1, c2 = st.columns(2)
-        c1.link_button("💬 WhatsApp", f"https://wa.me/?text={q}", use_container_width=True)
-        c2.link_button("✈️ Telegram", f"https://t.me/share/url?url={u}&text={urllib.parse.quote(msg)}",
+        c1.link_button("WhatsApp", f"https://wa.me/?text={q}", use_container_width=True)
+        c2.link_button("Telegram", f"https://t.me/share/url?url={u}&text={urllib.parse.quote(msg)}",
                        use_container_width=True)
-        c1.link_button("📘 Facebook", f"https://www.facebook.com/sharer/sharer.php?u={u}",
+        c1.link_button("Facebook", f"https://www.facebook.com/sharer/sharer.php?u={u}",
                        use_container_width=True)
-        c2.link_button("💼 LinkedIn", f"https://www.linkedin.com/sharing/share-offsite/?url={u}",
+        c2.link_button("LinkedIn", f"https://www.linkedin.com/sharing/share-offsite/?url={u}",
                        use_container_width=True)
-        c1.link_button("🐦 X", f"https://twitter.com/intent/tweet?text={q}", use_container_width=True)
-        c2.link_button("✉️ SMS", f"sms:?&body={q}", use_container_width=True)
+        c1.link_button("X", f"https://twitter.com/intent/tweet?text={q}", use_container_width=True)
+        c2.link_button("SMS", f"sms:?&body={q}", use_container_width=True)
 
 
 # ------------------------------------------------------------------- Avis
@@ -154,9 +154,9 @@ def social_bar():
     st.markdown('<div class="social"><b>❤️ Vous aimez Pavel IA ?</b><br>Likez, donnez votre avis et '
                 'partagez-le à vos amis.</div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3)
-    c1.button(f"{'❤️' if liked else '🤍'} {_likes()}", on_click=_like, key="like_btn", disabled=liked)
-    c2.button("💬 Avis", on_click=_toggle, args=("rv_open",), key="rv_btn")
-    c3.button("📤 Partager", on_click=_toggle, args=("share_open",), key="share_btn")
+    c1.button(f"J'aime {_likes()}", on_click=_like, key="like_btn", disabled=liked)
+    c2.button("Avis", on_click=_toggle, args=("rv_open",), key="rv_btn")
+    c3.button("Partager", on_click=_toggle, args=("share_open",), key="share_btn")
     if ss.get("rv_open"):
         review_form()
     if ss.get("share_open"):
@@ -169,9 +169,9 @@ def support_card():
     st.markdown('<div class="support"><b>💛 Pavel IA est gratuit</b><br>Il vous a été utile ? '
                 'Un petit soutien aide à le faire grandir.</div>', unsafe_allow_html=True)
     if url.startswith("https://"):
-        st.link_button("💛 SOUTENIR PAVEL IA VIA PAYPAL", url, use_container_width=True)
+        st.link_button("SOUTENIR PAVEL IA VIA PAYPAL", url, use_container_width=True)
     else:
-        st.button("💛 SOUTENIR VIA PAYPAL", key="paypal_btn",
+        st.button("SOUTENIR VIA PAYPAL", key="paypal_btn",
                   on_click=lambda: st.toast("Le lien PayPal arrive bientôt. Merci ! 🙏"))
 
 
