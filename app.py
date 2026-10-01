@@ -2,34 +2,60 @@
 import datetime
 import importlib
 import re
+import types
 
 import streamlit as st
 
-import ai
-import exporters
-from config import COUNTRIES, CV_TYPES, LANGS, LEVELS, TEMPLATES, has
+try:
+    import ai
+    import exporters
+    from config import COUNTRIES, CV_TYPES, LANGS, LEVELS, TEMPLATES, has
+except Exception as _err:  # fichier essentiel absent ou obsolète
+    st.error(f"🛠️ Fichier essentiel manquant ou incorrect : {type(_err).__name__} : {_err}. "
+             "Vérifiez que ai.py, config.py et exporters.py (et requirements.txt) sont bien dans GitHub, "
+             "à jour, puis faites Reboot.")
+    st.stop()
 
 MISSING = []
+PROBLEMS = []
+REQUIRED = {
+    "ui": ["inject_css", "hero", "badges", "stats", "section", "steps", "mini_logo"],
+    "social": ["social_bar", "footer"],
+    "vault": ["save", "panel", "tracker_load", "tracker_save"],
+    "ats_live": ["page"],
+    "interview_coach": ["page"],
+    "linkedin_gen": ["page"],
+    "tracker": ["page"],
+}
 
 
 class _Safe:
-    """Charge un module optionnel. S'il manque ou est obsolète, l'app continue (fonction désactivée)
-    et le problème est signalé en bas de page."""
+    """Charge un module optionnel. S'il manque ou est incorrect, l'app continue (fonction désactivée)
+    et le problème est expliqué en haut de page."""
 
     def __init__(self, name):
         self._name = name
+        self._mod = None
         try:
             self._mod = importlib.import_module(name)
+        except ModuleNotFoundError as e:
+            PROBLEMS.append(f"**{name}.py** est absent du dépôt GitHub ({e}).")
+        except SyntaxError as e:
+            PROBLEMS.append(f"**{name}.py** : erreur de syntaxe ligne {e.lineno} ({e.msg}). "
+                            "Le fichier est mal collé ou incomplet.")
         except Exception as e:
-            self._mod = None
-            MISSING.append(f"{name}.py introuvable ou en erreur ({type(e).__name__})")
+            PROBLEMS.append(f"**{name}.py** : {type(e).__name__} : {e}")
+        if self._mod is not None:
+            absent = [a for a in REQUIRED.get(name, []) if not hasattr(self._mod, a)]
+            if absent:
+                first = (self._mod.__doc__ or "").strip().splitlines()[:1]
+                PROBLEMS.append(f"**{name}.py** n'est pas la bonne version : il manque {', '.join(absent)}. "
+                                f"Le fichier commence par « {first[0] if first else 'rien'} ». "
+                                "Remplacez-le par celui de l'archive.")
 
     def __getattr__(self, attr):
-        f = getattr(self._mod, attr, None) if self._mod else None
+        f = getattr(self._mod, attr, None) if self._mod is not None else None
         if f is None:
-            note = f"{self._name}.py à mettre à jour ({attr} absent)"
-            if self._mod and note not in MISSING:
-                MISSING.append(note)
             return lambda *a, **k: False
         return f
 
@@ -37,9 +63,17 @@ class _Safe:
 social = _Safe("social")
 ui = _Safe("ui")
 vault = _Safe("vault")
+ats_live = _Safe("ats_live")
+interview_coach = _Safe("interview_coach")
+linkedin_gen = _Safe("linkedin_gen")
+tracker = _Safe("tracker")
 
 st.set_page_config(page_title="Pavel IA CV Pro", page_icon="📄", layout="centered",
                    initial_sidebar_state="collapsed")
+
+if PROBLEMS:
+    st.error("🛠️ Le design est désactivé : corrigez ces fichiers dans GitHub puis faites Reboot.\n\n"
+             + "\n\n".join("- " + p for p in PROBLEMS))
 
 ui.inject_css()
 
@@ -49,7 +83,7 @@ ss.setdefault("step", 1)
 ss.setdefault("cv", {})
 ss.setdefault("docs", [])
 
-CV_KEYS = ["prenom", "nom", "tel", "email", "ville", "pays", "linkedin", "cvtype", "sector",
+CV_KEYS = ["prenom", "nom", "tel", "email", "ville", "pays", "linkedin", "address", "website", "template", "cvtype", "sector",
            "poste", "level", "target_country", "target_city", "lang", "profile", "experiences",
            "formation", "skills", "languages", "extras"]
 STEPS = ["Identité", "Poste visé", "Parcours", "Compétences"]
@@ -114,12 +148,12 @@ def field(label, key, area=False, ph=""):
     ss.cv[key] = fn(label, placeholder=ph, key="w_" + key, **kw)
 
 
-def pick(label, key, options):
+def pick(label, key, options, fmt=None):
     kw = {}
     if "w_" + key not in ss:
         cur = ss.cv.get(key, options[0])
         kw["index"] = options.index(cur) if cur in options else 0
-    ss.cv[key] = st.selectbox(label, options, key="w_" + key, **kw)
+    ss.cv[key] = st.selectbox(label, options, key="w_" + key, format_func=fmt or str, **kw)
 
 
 # Callbacks des assistants IA (ils modifient les champs AVANT leur affichage)
@@ -195,14 +229,95 @@ def downloads(txt, tpl, base, k):
                        "text/plain", key="txt_" + k)
 
 
+def apply_contact(k):
+    ss[k] = ai.inject_contact(ss[k], ss.get("cc_tel_" + k, ""), ss.get("cc_mail_" + k, ""),
+                              ss.get("cc_addr_" + k, ""))
+    st.toast("Coordonnées ajoutées au CV.", icon="✅")
+
+
+def contact_check(k):
+    """Alerte (et correction en un clic) si l'en-tête du CV n'a ni téléphone ni e-mail."""
+    text = ss.get(k, "")
+    if "## " not in text or not hasattr(ai, "missing_contact"):
+        return
+    miss = ai.missing_contact(text)
+    if not miss:
+        return
+    st.warning("⚠️ Coordonnées manquantes dans l'en-tête : " + " et ".join(miss) + ".")
+    with st.expander("➕ Ajouter mes coordonnées", expanded=True):
+        c = ss.cv
+        st.text_input("Téléphone", value=c.get("tel", ""), key="cc_tel_" + k)
+        st.text_input("E-mail", value=c.get("email", ""), key="cc_mail_" + k)
+        st.text_input("Adresse ou ville", key="cc_addr_" + k,
+                      value=", ".join(x for x in (c.get("address", ""), c.get("ville", "")) if x))
+        st.button("✅ Insérer dans mon CV", on_click=apply_contact, args=(k,), key="cc_btn_" + k)
+
+
+def cv_gate(cv, key):
+    """Vérifie que le texte est bien un CV (CV, lettre, offre ou autre). True si l'on peut continuer."""
+    if len(cv.strip()) < 50:
+        return True
+    sig = hash(cv)
+    cache = ss.get("kind_" + key)
+    if not cache or cache[0] != sig:
+        res = run_ai(ai.detect_type, cv)
+        if not res:
+            return True
+        cache = (sig, res[0], res[1])
+        ss["kind_" + key] = cache
+    _, kind, why = cache
+    if kind == "CV":
+        st.caption("✅ Document reconnu : c'est bien un CV.")
+        return True
+    label = ai.KIND_LABELS.get(kind, "un autre type de document")
+    st.warning(f"📄 Ce document ressemble à **{label}**, pas à un CV : {why}")
+    st.info({"LETTRE": "Pour une lettre, utilisez « Lettre de motivation » (ou « Traduire mon CV » pour la traduire).",
+             "OFFRE": "Collez cette offre dans le champ « annonce » et importez votre vrai CV ici."}.get(
+        kind, "Importez votre CV au format PDF, ou collez son texte, pour obtenir une analyse pertinente."))
+    return st.checkbox("Continuer quand même avec ce document", key="force_" + key)
+
+
+def show_analysis(raw):
+    """Affiche l'analyse : score en anneau, critères, puis encadrés colorés. Texte brut si format inattendu."""
+    parse = getattr(ai, "parse_analysis", None)
+    a = parse(raw) if parse else {"ok": False}
+    if not a.get("ok"):
+        st.markdown(raw)
+        return
+    ui.score(a["score"], a["verdict"] or "Voici votre bilan.")
+    if a["criteria"]:
+        st.markdown("#### 📊 Détail par critère")
+        for label, n, why in a["criteria"]:
+            st.write(f"**{label}** : {n}/100")
+            st.progress(n / 100)
+            st.caption(why)
+    bullets = lambda items: "\n".join("- " + x for x in items)
+    if a["strengths"]:
+        st.success("**✅ Points forts**\n\n" + bullets(a["strengths"]))
+    if a["improve"]:
+        st.warning("**⚠️ À améliorer**\n\n" + bullets(a["improve"]))
+    if a["suggest"]:
+        st.info("**💡 Suggestions concrètes**\n\n" + bullets(a["suggest"]))
+    miss = [m for m in a["missing"] if m.lower().strip(" .") not in ("aucune", "aucun", "rien")]
+    if miss:
+        st.error("**📌 Informations manquantes**\n\n" + bullets(miss))
+
+
 def result_block(k, kind, poste=""):
     if not ss.get(k):
         return
     st.text_area("Résultat (modifiable)", key=k, height=380)
+    is_cv = kind.startswith("CV")
+    if is_cv:
+        contact_check(k)
     with st.expander("📋 Copier le texte"):
         st.code(ss[k], language="markdown")
-    tpl = st.selectbox("Modèle de mise en page", list(TEMPLATES), key="tpl_" + k,
-                       format_func=lambda t: f"{t} — {TEMPLATES[t]}")
+    keys = list(TEMPLATES)
+    default = ss.cv.get("template") if is_cv and ss.cv.get("template") in keys else keys[0]
+    if is_cv:
+        ui.template_gallery(ss.get("tpl_" + k, default))
+    tpl = st.selectbox("Maquette de mise en page", keys, index=keys.index(default), key="tpl_" + k,
+                       format_func=lambda t: f"{t} : {TEMPLATES[t]}")
     st.caption("💡 Relisez toujours le document avant de postuler : l'IA structure, vous validez.")
     downloads(ss[k], tpl, f"{kind}_{datetime.date.today().isoformat()}".replace(" ", "_"), k)
     st.button("💾 Enregistrer dans Mes documents", on_click=save_doc,
@@ -247,13 +362,18 @@ def home():
     n_l = sum(d["kind"] == "Lettre" for d in ss.docs)
     ui.stats(n_cv, n_l)
     social.social_bar()
-    ui.section("Que souhaitez-vous faire ?")
-    items = [("📄 CRÉER MON CV", "cv"), ("✉️ LETTRE DE MOTIVATION", "letter"),
-             ("🤖 ANALYSER MON CV", "analyze"), ("🎯 ADAPTER À UNE OFFRE", "adapt"),
-             ("🌍 TRADUIRE MON CV", "translate"), ("🚀 CV EXPRESS", "express"),
-             ("📁 MES DOCUMENTS", "docs")]
-    for label, p in items:
-        st.button(label, on_click=go, args=(p,), key="home_" + p)
+    groups = [
+        ("Créer", [("📄 CRÉER MON CV", "cv"), ("✉️ LETTRE DE MOTIVATION", "letter"), ("🚀 CV EXPRESS", "express")]),
+        ("Optimiser", [("🤖 ANALYSER MON CV", "analyze"), ("🎯 ADAPTER À UNE OFFRE", "adapt"),
+                       ("📊 SCORE ATS EN DIRECT", "ats"), ("🌍 TRADUIRE MON CV", "translate")]),
+        ("Réussir", [("🎤 SIMULATION D'ENTRETIEN", "interview"), ("💼 PROFIL LINKEDIN", "linkedin"),
+                     ("📌 SUIVI DES CANDIDATURES", "tracker")]),
+        ("Mes documents", [("📁 MES DOCUMENTS", "docs")]),
+    ]
+    for title, items in groups:
+        ui.section(title)
+        for label, p in items:
+            st.button(label, on_click=go, args=(p,), key="home_" + p)
     ui.steps()
     with st.expander("🔒 Confidentialité"):
         st.write("Vos informations sont utilisées pour générer et personnaliser vos documents. "
@@ -268,9 +388,11 @@ def page_cv():
     st.progress(step / 4)
     st.caption(f"Étape {step} sur 4 — {STEPS[step - 1]}")
     if step == 1:
-        for lab, key in [("Prénom", "prenom"), ("Nom", "nom"), ("Téléphone", "tel"),
-                         ("Email", "email"), ("Ville", "ville"), ("Pays", "pays"),
-                         ("LinkedIn (facultatif)", "linkedin")]:
+        st.caption("Les champs * apparaîtront obligatoirement dans l'en-tête de votre CV.")
+        for lab, key in [("Prénom *", "prenom"), ("Nom *", "nom"), ("Téléphone *", "tel"),
+                         ("E-mail *", "email"), ("Adresse (rue, code postal)", "address"),
+                         ("Ville *", "ville"), ("Pays", "pays"), ("LinkedIn (facultatif)", "linkedin"),
+                         ("Site web (facultatif)", "website")]:
             field(lab, key)
     elif step == 2:
         pick("Type de CV", "cvtype", CV_TYPES)
@@ -280,6 +402,8 @@ def page_cv():
         pick("Pays ciblé", "target_country", COUNTRIES)
         field("Ville ciblée", "target_city")
         pick("Langue du CV", "lang", list(LANGS))
+        pick("Maquette du CV", "template", list(TEMPLATES), lambda t: f"{t} : {TEMPLATES[t]}")
+        ui.template_gallery(ss.cv.get("template", ""))
         field("Profil professionnel (modifiable, facultatif)", "profile", True)
         st.button("✨ Rédiger mon profil professionnel (IA)", on_click=fill_profile,
                   key="ai_sugg_summary")
@@ -308,8 +432,12 @@ def page_cv():
         c2.button("Suivant →", on_click=setstep, args=(step + 1,), key="next")
     if step == 4 and st.button("✨ GÉNÉRER MON CV", key="gen_cv"):
         sync()
-        if not (ss.cv.get("nom") or ss.cv.get("prenom")):
-            st.warning("Renseignez au moins votre nom à l'étape 1.")
+        c = ss.cv
+        miss = [lab for lab, ok in (("votre nom", c.get("nom") or c.get("prenom")),
+                                    ("votre téléphone", c.get("tel")), ("votre e-mail", c.get("email")),
+                                    ("votre ville ou adresse", c.get("ville") or c.get("address"))) if not ok]
+        if miss:
+            st.warning("Pour un CV complet, renseignez à l'étape 1 : " + ", ".join(miss) + ".")
         else:
             out = run_ai(ai.make_cv, dict(ss.cv))
             if out:
@@ -348,14 +476,17 @@ def page_letter():
 def page_analyze():
     top("Analyser mon CV")
     cv = import_cv("an")
+    cv_ok = cv_gate(cv, "an")
     if st.button("🤖 LANCER L'ANALYSE", key="an_btn"):
         if len(cv.strip()) < 50:
             st.warning("Importez ou collez d'abord votre CV.")
+        elif not cv_ok:
+            st.warning("Cochez « Continuer quand même » si vous voulez analyser ce document.")
         else:
             ss["an_res"] = run_ai(ai.analyze, cv) or ss.get("an_res", "")
     if ss.get("an_res"):
         st.markdown("### 📋 ANALYSE PAVEL IA")
-        st.markdown(ss["an_res"])
+        show_analysis(ss["an_res"])
         if st.button("✨ AMÉLIORER MON CV", key="imp_btn"):
             out = run_ai(ai.improve_cv, cv, ss["an_res"])
             if out:
@@ -368,12 +499,15 @@ def page_analyze():
 def page_adapt():
     top("Adapter mon CV à une offre")
     cv = import_cv("ad")
+    cv_ok = cv_gate(cv, "ad")
     offer = st.text_area("Collez l'annonce", height=180, key="ad_offer")
     text_counter(offer, min_chars=30)
     ready = len(cv.strip()) >= 50 and len(offer.strip()) >= 30
     if st.button("🔎 COMPARER CV ↔ OFFRE", key="ad_cmp"):
         if not ready:
             st.warning("Ajoutez votre CV et l'annonce de l'offre.")
+        elif not cv_ok:
+            st.warning("Cochez « Continuer quand même » si vous voulez utiliser ce document comme CV.")
         else:
             ss["ad_res"] = run_ai(ai.match, cv, offer) or ss.get("ad_res", "")
     if ss.get("ad_res"):
@@ -463,12 +597,28 @@ def page_docs():
     vault.panel(downloads)
 
 
+H = types.SimpleNamespace(ss=ss, ai=ai, ui=ui, vault=vault, top=top, run_ai=run_ai, import_cv=import_cv,
+                          cv_gate=cv_gate, show_ats=show_ats, ats_button=ats_button, go=go)
+
+
+def ext_page(mod, name):
+    """Page fournie par un module externe, avec un message clair si le fichier manque."""
+    def run():
+        if getattr(mod, "_mod", None) is None or not hasattr(mod._mod, "page"):
+            st.button("← Accueil", on_click=go, args=("home",), key="back_ext_" + name)
+            st.error(f"Le fichier {name}.py est absent ou obsolète dans GitHub : ajoutez-le, puis redémarrez l'app.")
+            return
+        mod.page(H)
+    return run
+
+
 PAGES = {"home": home, "cv": page_cv, "letter": page_letter, "analyze": page_analyze,
-         "adapt": page_adapt, "translate": page_translate, "express": page_express,
-         "docs": page_docs}
+         "adapt": page_adapt, "translate": page_translate, "express": page_express, "docs": page_docs,
+         "ats": ext_page(ats_live, "ats_live"), "interview": ext_page(interview_coach, "interview_coach"),
+         "linkedin": ext_page(linkedin_gen, "linkedin_gen"), "tracker": ext_page(tracker, "tracker")}
 PAGES.get(ss.page, home)()
 st.divider()
 social.footer(ss.page != "home")
 if MISSING:
     st.warning("⚠️ Fichiers à vérifier dans GitHub : " + " · ".join(MISSING))
-        
+    
