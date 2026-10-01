@@ -181,4 +181,4 @@ def footer(show_social=True):
     reviews_section()
     support_card()
     st.caption(f"Pavel IA CV 4.0 · version {BUILD} · stockage : {storage.backend_label()}")
-            
+    
