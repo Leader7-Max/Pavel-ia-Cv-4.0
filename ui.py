@@ -1,4 +1,5 @@
 """Identité visuelle : logo, en-tête et effets CSS de Pavel IA CV 4.0."""
+import html
 import urllib.parse
 
 import streamlit as st
@@ -13,10 +14,11 @@ LOGO = ('<svg width="{s}" height="{s}" viewBox="0 0 64 64" xmlns="http://www.w3.
         '<rect x="23" y="43" width="16" height="3.2" rx="1.6" fill="#c7d2fe"/>'
         '<path d="M51 7l2 4.6L57.6 13.6 53 15.6 51 20.2 49 15.6 44.4 13.6 49 11.6z" fill="#fde68a"/></svg>')
 
-_HOME = ["cv", "letter", "analyze", "adapt", "translate", "express", "docs"]
+_HOME = ["cv", "letter", "express", "analyze", "adapt", "ats", "translate", "interview", "linkedin", "tracker", "docs"]
 _COLORS = {"cv": "#2563eb,#1e40af", "letter": "#8b5cf6,#5b21b6", "analyze": "#06b6d4,#155e75",
-           "adapt": "#ec4899,#9d174d", "translate": "#10b981,#065f46",
-           "express": "#f59e0b,#b45309", "docs": "#64748b,#1e293b"}
+           "adapt": "#ec4899,#9d174d", "translate": "#10b981,#065f46", "express": "#f59e0b,#b45309",
+           "docs": "#64748b,#1e293b", "ats": "#0ea5e9,#1d4ed8", "interview": "#ef4444,#9f1239",
+           "linkedin": "#0a66c2,#064789", "tracker": "#14b8a6,#0f766e"}
 
 CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
@@ -286,6 +288,22 @@ header[data-testid="stHeader"]{background:transparent!important}
 [class*="st-key-home_"] button{min-height:3.7rem;font-size:1.02rem;line-height:1.2;padding:.5rem 1rem;
  border-radius:18px;display:flex;align-items:center;justify-content:center;text-align:center}
 .st-key-paypal_btn button p{display:flex;align-items:center;justify-content:center}
+.ringwrap{display:flex;align-items:center;gap:1rem;padding:.9rem 1rem;margin:.4rem 0 .8rem;border-radius:20px;
+ background:rgba(255,255,255,.88);border:1px solid #e2e8f0;box-shadow:0 6px 18px rgba(15,23,42,.07);animation:rise .6s ease both}
+.ring{position:relative;flex:none;width:86px;height:86px;border-radius:50%;display:grid;place-items:center;
+ background:conic-gradient(var(--c) calc(var(--p) * 1%),#e2e8f0 0)}
+.ring::after{content:"";position:absolute;inset:9px;border-radius:50%;background:#fff}
+.ring span{position:relative;z-index:1;font-size:1.5rem;font-weight:800;color:#0f172a}
+.verdict b{display:block;font-size:1rem;color:#0f172a;line-height:1.3}
+.verdict small{display:block;margin-top:.25rem;color:#64748b;font-size:.75rem;line-height:1.3}
+.tpls{display:flex;gap:.7rem;overflow-x:auto;padding:.4rem .2rem .8rem;scroll-snap-type:x proximity}
+.tpl{flex:none;text-align:center;scroll-snap-align:start;font-size:.66rem;font-weight:700;color:#475569;transition:transform .2s}
+.tpl:hover{transform:translateY(-3px)}
+.pg{position:relative;width:92px;height:128px;background:#fff;border:1px solid #cbd5e1;border-radius:7px;overflow:hidden;
+ box-shadow:0 4px 10px rgba(15,23,42,.1);margin-bottom:.3rem}
+.pg i,.pg b,.pg u{position:absolute;display:block;border-radius:2px;text-decoration:none}
+.tpl.sel .pg{border-color:#7c3aed;box-shadow:0 0 0 2px rgba(124,58,237,.45),0 6px 14px rgba(124,58,237,.2)}
+.tpl.sel span{color:#6d28d9}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 """
 
@@ -321,3 +339,61 @@ def _css_icons():
         css += ('[data-testid="stLinkButton"] ' + sel + '::before{content:"";flex:none;width:1.3em;'
                 'height:1.3em;margin-right:.55rem;background:' + _uri(name) + ' center/contain no-repeat}')
     return css
+
+
+# ------------------------------------------------------------ Score en anneau et galerie de maquettes
+def score(value, verdict="", caption="Note indicative sur 100 : ce n'est pas une garantie d'embauche ni de réussite ATS."):
+    v = max(0, min(100, int(value)))
+    col = "#ef4444" if v < 50 else "#f59e0b" if v < 75 else "#10b981"
+    st.markdown(f'<div class="ringwrap"><div class="ring" style="--p:{v};--c:{col}"><span>{v}</span></div>'
+                f'<div class="verdict"><b>{html.escape(str(verdict))}</b><small>{html.escape(str(caption))}</small>'
+                '</div></div>', unsafe_allow_html=True)
+
+
+def _bars(x, y, w, n, col="#d5dbe5", gap=7, h=3):
+    return "".join(f'<i style="left:{x}px;top:{y + k * gap}px;width:{w}px;height:{h}px;background:{col}"></i>'
+                   for k in range(n))
+
+
+def _mini(t):
+    c = t.get("accent", t["color"])
+    lay, hdr = t["layout"], t["header"]
+    if lay == "sidebar":
+        return (f'<b style="left:0;top:0;width:32px;height:100%;background:{t["color"]}"></b>'
+                + _bars(5, 14, 22, 3, "#ffffffbb") + _bars(5, 52, 22, 4, "#ffffff88")
+                + f'<i style="left:40px;top:10px;width:46px;height:6px;background:{t["color"]}"></i>'
+                + _bars(40, 22, 46, 4) + _bars(40, 60, 46, 8))
+    if lay == "euro":
+        return (f'<i style="left:8px;top:10px;width:48px;height:6px;background:{c}"></i>' + _bars(8, 20, 34, 1)
+                + f'<u style="left:34px;top:34px;width:1px;height:86px;background:{c}"></u>'
+                + "".join(_bars(6, 38 + k * 26, 24, 1, c, h=3) + _bars(40, 38 + k * 26, 46, 3) for k in range(3)))
+    head = ""
+    if hdr == "band":
+        head = (f'<b style="left:0;top:0;width:100%;height:32px;background:{t["color"]}"></b>'
+                + _bars(8, 9, 50, 1, "#ffffff", h=6) + _bars(8, 20, 34, 1, "#ffffffaa"))
+        top = 42
+    elif hdr == "center":
+        head = (f'<i style="left:20px;top:10px;width:52px;height:6px;background:{c}"></i>'
+                + _bars(26, 20, 40, 1) + f'<i style="left:26px;top:27px;width:40px;height:1px;background:{c}"></i>')
+        top = 38
+    else:
+        head = (f'<i style="left:8px;top:10px;width:52px;height:6px;background:{c}"></i>' + _bars(8, 20, 36, 1)
+                + (f'<i style="left:8px;top:27px;width:76px;height:1px;background:{c}"></i>' if t.get("rule") else ""))
+        top = 38
+    body = "".join(f'<i style="left:8px;top:{top + k * 28}px;width:30px;height:4px;background:{c}"></i>'
+                   + _bars(8, top + 9 + k * 28, 76, 2) for k in range(3))
+    return head + body
+
+
+def template_gallery(selected=""):
+    """Aperçu miniature de toutes les maquettes de CV (la maquette choisie est entourée)."""
+    try:
+        import exporters
+        styles = exporters.STYLES
+        cards = "".join(
+            f'<div class="tpl{" sel" if k == selected else ""}"><div class="pg">{_mini(t)}</div>'
+            f'<span>{html.escape(k)}</span></div>' for k, t in styles.items() if isinstance(t, dict))
+    except Exception:
+        return
+    st.markdown(f'<div class="tpls">{cards}</div>', unsafe_allow_html=True)
+        
