@@ -1,4 +1,7 @@
 """Coffre personnel : interface de sauvegarde durable chiffrée."""
+import datetime
+import json
+
 import streamlit as st
 
 import storage
@@ -61,6 +64,45 @@ def panel(downloads):
     st.button("🔄 Actualiser", on_click=_load, key="vault_ref")
     st.button("🔒 Fermer le coffre", on_click=_off, key="vault_off")
     for d in ss.get("vault_docs", []):
+        if str(d.get("kind", "")).startswith("__"):
+            continue  # documents internes (suivi des candidatures)
         with st.expander(f"{d['kind']} — {d['poste'] or 'sans titre'} — {d['date']}"):
             downloads(d["text"], d["tpl"], f"{d['kind']}_{d['id']}".replace(" ", "_"), f"v{d['id']}")
             st.button("🗑️ Supprimer", on_click=_delete, args=(d["id"],), key=f"vdel{d['id']}")
+
+
+# --------------------------------------------------------- Suivi des candidatures (Job Tracker)
+TRACKER_KIND = "__tracker__"
+
+
+def tracker_load():
+    """Liste des candidatures du coffre, [] si aucune, None si le coffre est inactif, False si erreur."""
+    code = ss.get("vault_active")
+    if not code:
+        return None
+    try:
+        for d in storage.list_docs(code):
+            if d["kind"] == TRACKER_KIND:
+                data = json.loads(d["text"])
+                return data if isinstance(data, list) else []
+        return []
+    except (storage.StorageError, ValueError):
+        return False
+
+
+def tracker_save(rows):
+    """Remplace le suivi stocké dans le coffre. Retourne True si sauvegardé."""
+    code = ss.get("vault_active")
+    if not code:
+        return False
+    try:
+        for d in storage.list_docs(code):
+            if d["kind"] == TRACKER_KIND:
+                storage.delete_doc(code, d["id"])
+        storage.save_doc(code, TRACKER_KIND, "", "", datetime.date.today().strftime("%d/%m/%Y"),
+                         json.dumps(rows, ensure_ascii=False))
+        return True
+    except storage.StorageError as e:
+        st.toast(str(e))
+        return False
+        
