@@ -1,484 +1,378 @@
-"""PAVEL IA CV PRO — application Streamlit (mobile-first, design premium)."""
-import datetime
-import importlib
-import re
-import types
+"""Pavel CV ia - Étape 1 : socle (accueil, création de CV, lettre, export PDF/Word)."""
+import io
+import json
 
 import streamlit as st
+from docx import Document
+from docx.shared import Pt
+from fpdf import FPDF
+from google import genai
 
-try:
-    import ai
-    import exporters
-    from config import COUNTRIES, CV_TYPES, LANGS, LEVELS, TEMPLATES, has
-except Exception as _err:  # fichier essentiel absent ou obsolète
-    st.error(f"🛠️ Fichier essentiel manquant ou incorrect : {type(_err).__name__} : {_err}. "
-             "Vérifiez que ai.py, config.py et exporters.py (et requirements.txt) sont bien dans GitHub, "
-             "à jour, puis faites Reboot.")
-    st.stop()
+st.set_page_config(page_title="Pavel CV ia", page_icon="📄", layout="centered")
 
-MISSING = []
-PROBLEMS = []
-REQUIRED = {
-    "ui": ["inject_css", "hero", "badges", "stats", "section", "steps", "mini_logo"],
-    "social": ["social_bar", "footer"],
-    "vault": ["save", "panel", "tracker_load", "tracker_save"],
-    "ats_live": ["page"],
-    "interview_coach": ["page"],
-    "linkedin_gen": ["page"],
-    "tracker": ["page"],
-}
+MODEL = "gemini-2.5-flash"
+PAYS = ["France", "Suisse", "Belgique", "Canada", "Luxembourg", "Allemagne", "Royaume-Uni"]
+LANGUES = ["Français", "English", "Deutsch", "Español", "Italiano"]
+MODELES = {"Classic": (30, 30, 30), "Modern": (25, 80, 160), "ATS": (0, 0, 0)}
 
 
-class _Safe:
-    """Charge un module optionnel. S'il manque ou est incorrect, l'app continue (fonction désactivée)
-    et le problème est expliqué en haut de page."""
-
-    def __init__(self, name):
-        self._name = name
-        self._mod = None
-        try:
-            self._mod = importlib.import_module(name)
-        except ModuleNotFoundError as e:
-            PROBLEMS.append(f"**{name}.py** est absent du dépôt GitHub ({e}).")
-        except SyntaxError as e:
-            PROBLEMS.append(f"**{name}.py** : erreur de syntaxe ligne {e.lineno} ({e.msg}). "
-                            "Le fichier est mal collé ou incomplet.")
-        except Exception as e:
-            PROBLEMS.append(f"**{name}.py** : {type(e).__name__} : {e}")
-        if self._mod is not None:
-            absent = [a for a in REQUIRED.get(name, []) if not hasattr(self._mod, a)]
-            if absent:
-                first = (self._mod.__doc__ or "").strip().splitlines()[:1]
-                PROBLEMS.append(f"**{name}.py** n'est pas la bonne version : il manque {', '.join(absent)}. "
-                                f"Le fichier commence par « {first[0] if first else 'rien'} ». "
-                                "Remplacez-le par celui de l'archive.")
-
-    def __getattr__(self, attr):
-        f = getattr(self._mod, attr, None) if self._mod is not None else None
-        if f is None:
-            return lambda *a, **k: False
-        return f
+# ---------------------------------------------------------------- utilitaires
+def clean(text):
+    """fpdf (polices de base) ne gère que le latin-1 : on remplace le reste."""
+    table = {"’": "'", "‘": "'", "“": '"', "”": '"', "–": "-", "—": "-",
+             "•": "-", "…": "...", "€": "EUR", "\u00a0": " "}
+    text = str(text or "")
+    for old, new in table.items():
+        text = text.replace(old, new)
+    return text.encode("latin-1", "replace").decode("latin-1")
 
 
-social = _Safe("social")
-ui = _Safe("ui")
-vault = _Safe("vault")
-ats_live = _Safe("ats_live")
-interview_coach = _Safe("interview_coach")
-linkedin_gen = _Safe("linkedin_gen")
-tracker = _Safe("tracker")
-
-st.set_page_config(page_title="Pavel IA CV Pro", page_icon="📄", layout="centered",
-                   initial_sidebar_state="collapsed")
-
-if PROBLEMS:
-    st.error("🛠️ Le design est désactivé : corrigez ces fichiers dans GitHub puis faites Reboot.\n\n"
-             + "\n\n".join("- " + p for p in PROBLEMS))
-
-ui.inject_css()
-
-ss = st.session_state
-ss.setdefault("page", "home")
-ss.setdefault("step", 1)
-ss.setdefault("cv", {})
-ss.setdefault("docs", [])
-
-CV_KEYS = ["prenom", "nom", "tel", "email", "ville", "pays", "linkedin", "address", "website", "template", "cvtype", "sector",
-           "poste", "level", "target_country", "target_city", "lang", "profile", "experiences",
-           "formation", "skills", "languages", "extras"]
-STEPS = ["Identité", "Poste visé", "Parcours", "Compétences"]
-
-
-def sync():
-    for k in CV_KEYS:
-        if "w_" + k in ss:
-            ss.cv[k] = ss["w_" + k]
-
-
-def go(p):
-    sync()
-    ss.page = p
-
-
-def setstep(n):
-    sync()
-    ss.step = n
-
-
-def run_ai(fn, *args):
+def ask_gemini(prompt):
     try:
-        with st.spinner("✨ Pavel IA analyse et rédige..."):
-            return fn(*args)
-    except ai.AIError as e:
-        st.error(str(e))
+        key = st.secrets["GEMINI_API_KEY"]
     except Exception:
-        st.error("Une erreur inattendue est survenue. Réessayez dans un instant.")
-    return None
-
-
-def celebrate(big=False):
-    st.toast("Document prêt : relisez-le, puis téléchargez-le.", icon="✨")
-    if big:
-        st.balloons()
-
-
-def text_counter(text, min_chars=0):
-    chars = len(text)
-    words = len(text.split()) if text.strip() else 0
-    if min_chars and chars < min_chars:
-        st.caption(f"✏️ {chars} caractères ({words} mots) — encore {min_chars - chars} recommandés")
-    elif min_chars:
-        st.caption(f"✅ {chars} caractères ({words} mots) — longueur suffisante")
-    else:
-        st.caption(f"📊 {chars} caractères ({words} mots)")
-
-
-def top(title):
-    st.button("← Accueil", on_click=go, args=("home",), key="back_" + ss.page)
-    ui.mini_logo()
-    st.subheader(title)
-    if not has(ss.page):
-        st.info("Cette fonctionnalité fait partie de l'offre Premium (bientôt disponible).")
+        st.error("Clé manquante : ajoute GEMINI_API_KEY dans les Secrets Streamlit.")
         st.stop()
-
-
-def field(label, key, area=False, ph=""):
-    fn = st.text_area if area else st.text_input
-    kw = {} if "w_" + key in ss else {"value": ss.cv.get(key, "")}
-    ss.cv[key] = fn(label, placeholder=ph, key="w_" + key, **kw)
-
-
-def pick(label, key, options, fmt=None):
-    kw = {}
-    if "w_" + key not in ss:
-        cur = ss.cv.get(key, options[0])
-        kw["index"] = options.index(cur) if cur in options else 0
-    ss.cv[key] = st.selectbox(label, options, key="w_" + key, format_func=fmt or str, **kw)
-
-
-# Callbacks des assistants IA (ils modifient les champs AVANT leur affichage)
-def fill_profile():
-    sync()
-    c = ss.cv
     try:
-        ss["w_profile"] = ai.suggest_summary(c.get("poste", ""), c.get("sector", ""),
-                                             c.get("level", ""), c.get("experiences", ""))
-        st.toast("✨ Profil rédigé — relisez-le et modifiez-le.", icon="🎯")
-    except ai.AIError as e:
-        st.toast(str(e))
-    except Exception:
-        st.toast("Fonction indisponible : mettez à jour ai.py.")
-
-
-def improve_field(key, mode):
-    txt = ss.get("w_" + key, "")
-    if not txt.strip():
-        st.toast("Écrivez d'abord quelques notes dans le champ.")
-        return
+        client = genai.Client(api_key=key)
+        response = client.models.generate_content(model=MODEL, contents=prompt)
+        return response.text or ""
+    except Exception as exc:
+        st.error(f"Erreur Gemini : {exc}")
+        return ""
+        def parse_json(text):
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end == -1:
+        return None
     try:
-        ss["w_" + key] = (ai.suggest_bullets(ss.cv.get("poste", ""), txt) if mode == "bullets"
-                          else ai.improve(txt))
-        st.toast("✨ Texte reformulé — vérifiez qu'il reste exact.", icon="🚀")
-    except ai.AIError as e:
-        st.toast(str(e))
-    except Exception:
-        st.toast("Fonction indisponible : mettez à jour ai.py.")
+        return json.loads(text[start:end + 1])
+    except json.JSONDecodeError:
+        return None
 
 
-def fetch_skills():
-    sync()
-    try:
-        ss["sugg_skills"] = ai.suggest_skills(ss.cv.get("poste", ""), ss.cv.get("sector", ""))
-    except ai.AIError as e:
-        st.toast(str(e))
-    except Exception:
-        st.toast("Fonction indisponible : mettez à jour ai.py.")
+def go(page):
+    st.session_state.page = page
+    st.rerun()
 
 
-def import_cv(k):
-    f = st.file_uploader("Importer votre CV (PDF, 5 Mo max)", type=["pdf"], key="up_" + k)
-    if f is not None and ss.get("last_" + k) != (f.name, f.size):
-        txt = run_ai(ai.pdf_text, f.getvalue())
-        ss["last_" + k] = (f.name, f.size)
-        if txt:
-            ss["imp_" + k] = txt
-    return st.text_area("Texte du CV (importé, modifiable, ou collez-le ici)", height=200,
-                        key="imp_" + k)
+def init_state():
+    st.session_state.setdefault("page", "home")
+    st.session_state.setdefault("step", 1)
+    st.session_state.setdefault("data", {})
+    st.session_state.setdefault("cv", None)
+    st.session_state.setdefault("letter", "")
 
 
-def save_doc(kind, text, tpl, poste):
-    ss.docs.append({"kind": kind, "text": text, "tpl": tpl, "poste": poste,
-                    "date": datetime.date.today().strftime("%d/%m/%Y")})
-    in_vault = vault.save(kind, poste, tpl, ss.docs[-1]["date"], text)
-    st.toast("Enregistré dans votre coffre sécurisé !" if in_vault else
-             "Enregistré pour cette session. Activez le coffre (Mes documents) pour le garder.",
-             icon="🎉")
+# ------------------------------------------------------------------- exports
+def contact_line(d):
+    parts = [d.get("email"), d.get("tel"), d.get("ville")]
+    return "  |  ".join(p for p in parts if p)
 
 
-def downloads(txt, tpl, base, k):
-    try:
-        st.download_button("⬇️ Télécharger en PDF", exporters.to_pdf(txt, tpl), base + ".pdf",
-                           "application/pdf", key="pdf_" + k)
-        st.download_button(
-            "⬇️ Télécharger en Word (.docx)", exporters.to_docx(txt, tpl), base + ".docx",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            key="docx_" + k)
-    except Exception:
-        st.error("Export PDF/Word impossible avec ce texte. Vérifiez-le puis réessayez.")
-    st.download_button("⬇️ Télécharger en TXT", exporters.to_txt(txt), base + ".txt",
-                       "text/plain", key="txt_" + k)
+def cv_pdf(cv, d, template):
+    r, g, b = MODELES[template]
+    pdf = FPDF()
+    pdf.set_margins(15, 15, 15)
+    pdf.set_auto_page_break(True, 15)
+    pdf.add_page()
+    name = f"{d.get('prenom', '')} {d.get('nom', '')}".strip()
+
+    if template == "Modern":
+        pdf.set_fill_color(r, g, b)
+        pdf.rect(0, 0, 210, 40, "F")
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Helvetica", "B", 22)
+        pdf.set_xy(15, 8)
+        pdf.cell(0, 10, clean(name))
+        pdf.set_font("Helvetica", "", 12)
+        pdf.set_xy(15, 20)
+        pdf.cell(0, 6, clean(cv.get("titre", "")))
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_xy(15, 29)
+        pdf.cell(0, 5, clean(contact_line(d)))
+        pdf.set_y(46)
+    else:
+        pdf.set_text_color(r, g, b)
+        pdf.set_font("Helvetica", "B", 20)
+        pdf.cell(0, 9, clean(name), align="C", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 12)
+        pdf.cell(0, 6, clean(cv.get("titre", "")), align="C", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 9)
+        pdf.cell(0, 5, clean(contact_line(d)), align="C", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+
+    labels = cv.get("labels", {})
+
+    def section(key, default):
+        pdf.ln(3)
+        pdf.set_text_color(r, g, b)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 7, clean(labels.get(key, default)).upper(), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_draw_color(r, g, b)
+        pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+        pdf.ln(2)
+        pdf.set_text_color(30, 30, 30)
+        pdf.set_font("Helvetica", "", 10)
+        def body(text, bold=False):
+        pdf.set_font("Helvetica", "B" if bold else "", 10)
+        pdf.multi_cell(0, 5.5, clean(text), new_x="LMARGIN", new_y="NEXT")
+
+    if cv.get("resume"):
+        section("profil", "Profil")
+        body(cv["resume"])
+    if cv.get("competences"):
+        section("competences", "Compétences")
+        body(", ".join(cv["competences"]))
+    if cv.get("experiences"):
+        section("experience", "Expérience professionnelle")
+        for e in cv["experiences"]:
+            head = " - ".join(x for x in [e.get("poste"), e.get("entreprise"), e.get("periode")] if x)
+            body(head, bold=True)
+            for m in e.get("missions", []):
+                body("- " + m)
+            pdf.ln(1.5)
+    if cv.get("formations"):
+        section("formation", "Formation")
+        for f in cv["formations"]:
+            body(" - ".join(x for x in [f.get("diplome"), f.get("etablissement"), f.get("periode")] if x))
+    if cv.get("langues"):
+        section("langues", "Langues")
+        body(", ".join(cv["langues"]))
+    if cv.get("centres_interet"):
+        section("interets", "Centres d'intérêt")
+        body(", ".join(cv["centres_interet"]))
+    return bytes(pdf.output())
 
 
-def apply_contact(k):
-    ss[k] = ai.inject_contact(ss[k], ss.get("cc_tel_" + k, ""), ss.get("cc_mail_" + k, ""),
-                              ss.get("cc_addr_" + k, ""))
-    st.toast("Coordonnées ajoutées au CV.", icon="✅")
+def cv_docx(cv, d):
+    doc = Document()
+    name = f"{d.get('prenom', '')} {d.get('nom', '')}".strip()
+    doc.add_heading(name, 0)
+    doc.add_paragraph(cv.get("titre", ""))
+    doc.add_paragraph(contact_line(d))
+    labels = cv.get("labels", {})
+
+    def block(key, default, items):
+        if items:
+            doc.add_heading(labels.get(key, default), 1)
+            for it in items:
+                doc.add_paragraph(it)
+
+    block("profil", "Profil", [cv.get("resume", "")] if cv.get("resume") else [])
+    block("competences", "Compétences", [", ".join(cv.get("competences", []))] if cv.get("competences") else [])
+    if cv.get("experiences"):
+        doc.add_heading(labels.get("experience", "Expérience professionnelle"), 1)
+        for e in cv["experiences"]:
+            p = doc.add_paragraph()
+            run = p.add_run(" - ".join(x for x in [e.get("poste"), e.get("entreprise"), e.get("periode")] if x))
+            run.bold = True
+            for m in e.get("missions", []):
+                doc.add_paragraph(m, style="List Bullet")
+    if cv.get("formations"):
+        doc.add_heading(labels.get("formation", "Formation"), 1)
+        for f in cv["formations"]:
+            doc.add_paragraph(" - ".join(x for x in [f.get("diplome"), f.get("etablissement"), f.get("periode")] if x))
+    block("langues", "Langues", [", ".join(cv.get("langues", []))] if cv.get("langues") else [])
+    block("interets", "Centres d'intérêt", [", ".join(cv.get("centres_interet", []))] if cv.get("centres_interet") else [])
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+    def letter_pdf(text):
+    pdf = FPDF()
+    pdf.set_margins(20, 20, 20)
+    pdf.set_auto_page_break(True, 20)
+    pdf.add_page()
+    pdf.set_font("Helvetica", "", 11)
+    pdf.multi_cell(0, 6, clean(text), new_x="LMARGIN", new_y="NEXT")
+    return bytes(pdf.output())
 
 
-def contact_check(k):
-    """Alerte (et correction en un clic) si l'en-tête du CV n'a ni téléphone ni e-mail."""
-    text = ss.get(k, "")
-    if "## " not in text or not hasattr(ai, "missing_contact"):
-        return
-    miss = ai.missing_contact(text)
-    if not miss:
-        return
-    st.warning("⚠️ Coordonnées manquantes dans l'en-tête : " + " et ".join(miss) + ".")
-    with st.expander("➕ Ajouter mes coordonnées", expanded=True):
-        c = ss.cv
-        st.text_input("Téléphone", value=c.get("tel", ""), key="cc_tel_" + k)
-        st.text_input("E-mail", value=c.get("email", ""), key="cc_mail_" + k)
-        st.text_input("Adresse ou ville", key="cc_addr_" + k,
-                      value=", ".join(x for x in (c.get("address", ""), c.get("ville", "")) if x))
-        st.button("✅ Insérer dans mon CV", on_click=apply_contact, args=(k,), key="cc_btn_" + k)
+def letter_docx(text):
+    doc = Document()
+    style = doc.styles["Normal"]
+    style.font.name = "Calibri"
+    style.font.size = Pt(11)
+    for para in text.split("\n"):
+        doc.add_paragraph(para)
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
 
 
-def cv_gate(cv, key):
-    """Vérifie que le texte est bien un CV (CV, lettre, offre ou autre). True si l'on peut continuer."""
-    if len(cv.strip()) < 50:
-        return True
-    sig = hash(cv)
-    cache = ss.get("kind_" + key)
-    if not cache or cache[0] != sig:
-        res = run_ai(ai.detect_type, cv)
-        if not res:
-            return True
-        cache = (sig, res[0], res[1])
-        ss["kind_" + key] = cache
-    _, kind, why = cache
-    if kind == "CV":
-        st.caption("✅ Document reconnu : c'est bien un CV.")
-        return True
-    label = ai.KIND_LABELS.get(kind, "un autre type de document")
-    st.warning(f"📄 Ce document ressemble à **{label}**, pas à un CV : {why}")
-    st.info({"LETTRE": "Pour une lettre, utilisez « Lettre de motivation » (ou « Traduire mon CV » pour la traduire).",
-             "OFFRE": "Collez cette offre dans le champ « annonce » et importez votre vrai CV ici."}.get(
-        kind, "Importez votre CV au format PDF, ou collez son texte, pour obtenir une analyse pertinente."))
-    return st.checkbox("Continuer quand même avec ce document", key="force_" + key)
+# --------------------------------------------------------------------- pages
+def page_home():
+    st.title("📄 Pavel CV ia")
+    st.caption("Créez. Améliorez. Adaptez. Postulez.")
+    st.write("Que souhaitez-vous faire ?")
+    if st.button("📄 Créer mon CV", use_container_width=True, type="primary"):
+        st.session_state.step = 1
+        go("cv")
+    if st.button("✉️ Ma lettre de motivation", use_container_width=True):
+        go("letter")
+    st.info("🔒 Vos informations servent uniquement à générer vos documents.")
 
 
-def show_analysis(raw):
-    """Affiche l'analyse : score en anneau, critères, puis encadrés colorés. Texte brut si format inattendu."""
-    parse = getattr(ai, "parse_analysis", None)
-    a = parse(raw) if parse else {"ok": False}
-    if not a.get("ok"):
-        st.markdown(raw)
-        return
-    ui.score(a["score"], a["verdict"] or "Voici votre bilan.")
-    if a["criteria"]:
-        st.markdown("#### 📊 Détail par critère")
-        for label, n, why in a["criteria"]:
-            st.write(f"**{label}** : {n}/100")
-            st.progress(n / 100)
-            st.caption(why)
-    bullets = lambda items: "\n".join("- " + x for x in items)
-    if a["strengths"]:
-        st.success("**✅ Points forts**\n\n" + bullets(a["strengths"]))
-    if a["improve"]:
-        st.warning("**⚠️ À améliorer**\n\n" + bullets(a["improve"]))
-    if a["suggest"]:
-        st.info("**💡 Suggestions concrètes**\n\n" + bullets(a["suggest"]))
-    miss = [m for m in a["missing"] if m.lower().strip(" .") not in ("aucune", "aucun", "rien")]
-    if miss:
-        st.error("**📌 Informations manquantes**\n\n" + bullets(miss))
-
-
-def result_block(k, kind, poste=""):
-    if not ss.get(k):
-        return
-    st.text_area("Résultat (modifiable)", key=k, height=380)
-    is_cv = kind.startswith("CV")
-    if is_cv:
-        contact_check(k)
-    with st.expander("📋 Copier le texte"):
-        st.code(ss[k], language="markdown")
-    keys = list(TEMPLATES)
-    default = ss.cv.get("template") if is_cv and ss.cv.get("template") in keys else keys[0]
-    if is_cv:
-        ui.template_gallery(ss.get("tpl_" + k, default))
-    tpl = st.selectbox("Maquette de mise en page", keys, index=keys.index(default), key="tpl_" + k,
-                       format_func=lambda t: f"{t} : {TEMPLATES[t]}")
-    st.caption("💡 Relisez toujours le document avant de postuler : l'IA structure, vous validez.")
-    downloads(ss[k], tpl, f"{kind}_{datetime.date.today().isoformat()}".replace(" ", "_"), k)
-    st.button("💾 Enregistrer dans Mes documents", on_click=save_doc,
-              args=(kind, ss[k], tpl, poste), key="save_" + k)
-
-
-def show_ats(k):
-    res = ss.get(k)
-    if not res:
-        return
-    st.markdown("#### 📊 Compatibilité ATS indicative")
-    st.caption("Estimation indicative, pas une garantie. Certains éléments graphiques "
-               "complexes peuvent être moins bien interprétés par certains systèmes ATS.")
-    rest = []
-    for l in res.splitlines():
-        m = re.match(r"^\s*(.+?)\s*\|\s*(\d{1,3})\s*\|\s*(.+)$", l)
-        if m:
-            n = min(int(m.group(2)), 100)
-            st.write(f"**{m.group(1)}** — {n}/100")
-            st.progress(n / 100)
-            st.caption(m.group(3))
-        elif l.strip():
-            rest.append(l)
-    if rest:
-        st.markdown("\n\n".join(rest))
-
-
-def ats_button(k, cv, offer=""):
-    if st.button("📄 ANALYSE ATS", key="ats_btn_" + k):
-        if not cv.strip():
-            st.warning("Ajoutez d'abord le texte de votre CV.")
-        else:
-            ss["ats_" + k] = run_ai(ai.ats, cv, offer) or ss.get("ats_" + k, "")
-    show_ats("ats_" + k)
-
-
-# ---------------------------------------------------------------- pages
-def home():
-    ui.hero()
-    ui.badges()
-    n_cv = sum(d["kind"].startswith("CV") for d in ss.docs)
-    n_l = sum(d["kind"] == "Lettre" for d in ss.docs)
-    ui.stats(n_cv, n_l)
-    social.social_bar()
-    groups = [
-        ("Créer", [("📄 CRÉER MON CV", "cv"), ("✉️ LETTRE DE MOTIVATION", "letter"), ("🚀 CV EXPRESS", "express")]),
-        ("Optimiser", [("🤖 ANALYSER MON CV", "analyze"), ("🎯 ADAPTER À UNE OFFRE", "adapt"),
-                       ("📊 SCORE ATS EN DIRECT", "ats"), ("🌍 TRADUIRE MON CV", "translate")]),
-        ("Réussir", [("🎤 SIMULATION D'ENTRETIEN", "interview"), ("💼 PROFIL LINKEDIN", "linkedin"),
-                     ("📌 SUIVI DES CANDIDATURES", "tracker")]),
-        ("Mes documents", [("📁 MES DOCUMENTS", "docs")]),
-    ]
-    for title, items in groups:
-        ui.section(title)
-        for label, p in items:
-            st.button(label, on_click=go, args=(p,), key="home_" + p)
-    ui.steps()
-    with st.expander("🔒 Confidentialité"):
-        st.write("Vos informations sont utilisées pour générer et personnaliser vos documents. "
-                 "Le contenu est envoyé au service IA (Gemini) pour la génération. Vos documents "
-                 "ne sont conservés que pendant votre session, sauf si vous activez le coffre "
-                 "personnel (sauvegarde chiffrée avec votre code).")
+def back_home():
+    if st.button("← Accueil"):
+        go("home")
 
 
 def page_cv():
-    top("Créer mon CV")
-    step = ss.step
-    st.progress(step / 4)
-    st.caption(f"Étape {step} sur 4 — {STEPS[step - 1]}")
+    back_home()
+    st.title("📄 Créer mon CV")
+    step = st.session_state.step
+    data = st.session_state.data
+    if step <= 3:
+        st.progress(step / 3, text=f"Étape {step} / 3")
+
     if step == 1:
-        st.caption("Les champs * apparaîtront obligatoirement dans l'en-tête de votre CV.")
-        for lab, key in [("Prénom *", "prenom"), ("Nom *", "nom"), ("Téléphone *", "tel"),
-                         ("E-mail *", "email"), ("Adresse (rue, code postal)", "address"),
-                         ("Ville *", "ville"), ("Pays", "pays"), ("LinkedIn (facultatif)", "linkedin"),
-                         ("Site web (facultatif)", "website")]:
-            field(lab, key)
-    elif step == 2:
-        pick("Type de CV", "cvtype", CV_TYPES)
-        field("Secteur (personnalisable)", "sector")
-        field("Poste recherché", "poste")
-        pick("Niveau d'expérience", "level", LEVELS)
-        pick("Pays ciblé", "target_country", COUNTRIES)
-        field("Ville ciblée", "target_city")
-        pick("Langue du CV", "lang", list(LANGS))
-        pick("Maquette du CV", "template", list(TEMPLATES), lambda t: f"{t} : {TEMPLATES[t]}")
-        ui.template_gallery(ss.cv.get("template", ""))
-        field("Profil professionnel (modifiable, facultatif)", "profile", True)
-        st.button("✨ Rédiger mon profil professionnel (IA)", on_click=fill_profile,
-                  key="ai_sugg_summary")
+        with st.form("f1"):
+            st.subheader("👤 Informations personnelles")
+            prenom = st.text_input("Prénom", data.get("prenom", ""))
+            nom = st.text_input("Nom", data.get("nom", ""))
+            email = st.text_input("Email", data.get("email", ""))
+            tel = st.text_input("Téléphone", data.get("tel", ""))
+            ville = st.text_input("Ville", data.get("ville", ""))
+            pays = st.selectbox("Pays visé", PAYS, index=PAYS.index(data.get("pays", "France")))
+            poste = st.text_input("Poste recherché", data.get("poste", ""))
+            if st.form_submit_button("Continuer →", use_container_width=True):
+                if not prenom or not nom or not poste:
+                    st.warning("Prénom, nom et poste recherché sont obligatoires.")
+                else:
+                    data.update(prenom=prenom, nom=nom, email=email, tel=tel,
+                                ville=ville, pays=pays, poste=poste)
+                    st.session_state.step = 2
+                    st.rerun()
+                    elif step == 2:
+        with st.form("f2"):
+            st.subheader("💼 Votre parcours")
+            st.caption("Écrivez simplement, l'IA reformule. Elle n'invente rien.")
+            exp = st.text_area("Expériences (poste, entreprise, durée, ce que vous faisiez)",
+                               data.get("exp", ""), height=160)
+            formation = st.text_area("Formations / diplômes", data.get("formation", ""), height=100)
+            comp = st.text_area("Compétences", data.get("comp", ""), height=80)
+            langues = st.text_input("Langues parlées", data.get("langues", ""))
+            col1, col2 = st.columns(2)
+            back = col1.form_submit_button("← Retour", use_container_width=True)
+            nxt = col2.form_submit_button("Continuer →", use_container_width=True)
+            if back or nxt:
+                data.update(exp=exp, formation=formation, comp=comp, langues=langues)
+                st.session_state.step = 1 if back else 3
+                st.rerun()
+
     elif step == 3:
-        field("Expériences (une par bloc : poste, entreprise, ville, période, missions, "
-              "résultats)", "experiences", True)
-        st.button("💡 Suggérer des missions percutantes (IA)", on_click=improve_field,
-                  args=("experiences", "bullets"), key="ai_sugg_bullets")
-        st.button("✨ Améliorer cette formulation (IA)", on_click=improve_field,
-                  args=("experiences", "improve"), key="impr_exp")
-        field("Formation (diplôme, établissement, ville, période)", "formation", True)
-    else:
-        field("Compétences (techniques, professionnelles, logiciels, outils)", "skills", True)
-        st.button("💡 Voir des suggestions de compétences (IA)", on_click=fetch_skills,
-                  key="ai_sugg_skills")
-        if ss.get("sugg_skills"):
-            st.info("Suggestions à vérifier : recopiez uniquement ce que vous maîtrisez vraiment.")
-            st.markdown(ss["sugg_skills"])
-        field("Langues et niveaux", "languages", True)
-        field("Compléments (certifications, permis, disponibilité, mobilité, intérêts)",
-              "extras", True)
-    c1, c2 = st.columns(2)
-    if step > 1:
-        c1.button("← Précédent", on_click=setstep, args=(step - 1,), key="prev")
-    if step < 4:
-        c2.button("Suivant →", on_click=setstep, args=(step + 1,), key="next")
-    if step == 4 and st.button("✨ GÉNÉRER MON CV", key="gen_cv"):
-        sync()
-        c = ss.cv
-        miss = [lab for lab, ok in (("votre nom", c.get("nom") or c.get("prenom")),
-                                    ("votre téléphone", c.get("tel")), ("votre e-mail", c.get("email")),
-                                    ("votre ville ou adresse", c.get("ville") or c.get("address"))) if not ok]
-        if miss:
-            st.warning("Pour un CV complet, renseignez à l'étape 1 : " + ", ".join(miss) + ".")
-        else:
-            out = run_ai(ai.make_cv, dict(ss.cv))
-            if out:
-                ss["cv_out"] = out
-                celebrate(True)
-    result_block("cv_out", "CV", ss.cv.get("poste", ""))
+        with st.form("f3"):
+            st.subheader("🎨 Options")
+            langue = st.selectbox("Langue du CV", LANGUES,
+                                  index=LANGUES.index(data.get("langue_cv", "Français")))
+            modele = st.selectbox("Modèle", list(MODELES), index=list(MODELES).index(data.get("modele", "Classic")))
+            col1, col2 = st.columns(2)
+            back = col1.form_submit_button("← Retour", use_container_width=True)
+            gen = col2.form_submit_button("✨ Générer", use_container_width=True, type="primary")
+            if back:
+                st.session_state.step = 2
+                st.rerun()
+            if gen:
+                data.update(langue_cv=langue, modele=modele)
+                generate_cv(data)
+
+    elif step == 4:
+        show_cv_result()
+
+
+def generate_cv(d):
+    prompt = f"""Tu es un expert en recrutement. Rédige un CV en {d['langue_cv']} adapté aux usages de ce pays : {d['pays']}.
+Poste visé : {d['poste']}
+Expériences : {d.get('exp', '')}
+Formations : {d.get('formation', '')}
+Compétences : {d.get('comp', '')}
+Langues : {d.get('langues', '')}
+
+RÈGLES : reformule et professionnalise, mais N'INVENTE AUCUNE expérience, entreprise, diplôme, date ni chiffre absent des informations fournies.
+Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, de la forme :
+{{"titre": "", "resume": "", "competences": [""],
+"experiences": [{{"poste": "", "entreprise": "", "periode": "", "missions": [""]}}],
+"formations": [{{"diplome": "", "etablissement": "", "periode": ""}}],
+"langues": [""], "centres_interet": [""],
+"labels": {{"profil": "", "competences": "", "experience": "", "formation": "", "langues": "", "interets": ""}}}}
+Les "labels" sont les titres de sections traduits en {d['langue_cv']}."""
+    with st.spinner("Rédaction en cours..."):
+        cv = parse_json(ask_gemini(prompt))
+    if cv is None:
+        st.error("La réponse de l'IA n'a pas pu être lue. Réessayez.")
+        return
+    st.session_state.cv = cv
+    st.session_state.step = 4
+    st.rerun()
+    def show_cv_result():
+    cv, d = st.session_state.cv, st.session_state.data
+    st.success("✅ Votre CV est prêt")
+    st.subheader(f"{d.get('prenom', '')} {d.get('nom', '')}")
+    st.caption(cv.get("titre", ""))
+    cv["resume"] = st.text_area("Profil (modifiable)", cv.get("resume", ""), height=120)
+    if cv.get("competences"):
+        st.markdown("**Compétences :** " + ", ".join(cv["competences"]))
+    for e in cv.get("experiences", []):
+        st.markdown(f"**{e.get('poste', '')}** - {e.get('entreprise', '')} ({e.get('periode', '')})")
+        for m in e.get("missions", []):
+            st.markdown(f"- {m}")
+    for f in cv.get("formations", []):
+        st.markdown(f"🎓 {f.get('diplome', '')} - {f.get('etablissement', '')} ({f.get('periode', '')})")
+
+    nom_fichier = f"CV_{d.get('prenom', '')}_{d.get('nom', '')}".replace(" ", "_")
+    try:
+        st.download_button("⬇️ Télécharger en PDF", cv_pdf(cv, d, d.get("modele", "Classic")),
+                           f"{nom_fichier}.pdf", "application/pdf", use_container_width=True)
+        st.download_button("⬇️ Télécharger en Word", cv_docx(cv, d), f"{nom_fichier}.docx",
+                           "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                           use_container_width=True)
+    except Exception as exc:
+        st.error(f"Erreur d'export : {exc}")
+    if st.button("✏️ Modifier mes informations", use_container_width=True):
+        st.session_state.step = 1
+        st.rerun()
 
 
 def page_letter():
-    top("Ma lettre de motivation")
-    nom = st.text_input("Nom", key="lt_nom")
-    poste = st.text_input("Poste recherché", key="lt_poste")
-    ent = st.text_input("Entreprise", key="lt_ent")
-    ville = st.text_input("Ville", key="lt_ville")
-    annonce = st.text_area("Annonce complète", height=180, key="lt_annonce")
-    exp = st.text_area("Votre expérience", key="lt_exp")
-    comp = st.text_area("Vos compétences", key="lt_comp")
-    dispo = st.text_input("Disponibilité", key="lt_dispo")
-    tone = st.selectbox("Ton", ["Professionnel", "Chaleureux", "Dynamique", "Sobre"], key="lt_tone")
-    length = st.selectbox("Longueur", ["Courte", "Moyenne", "Détaillée"], key="lt_len")
-    lang = st.selectbox("Langue", list(LANGS), key="lt_lang")
-    if st.button("✨ GÉNÉRER MA LETTRE", key="gen_letter"):
-        if not (nom.strip() and poste.strip()):
-            st.warning("Renseignez au moins votre nom et le poste.")
+    back_home()
+    st.title("✉️ Lettre de motivation")
+    d = st.session_state.data
+    with st.form("lettre"):
+        prenom = st.text_input("Prénom", d.get("prenom", ""))
+        nom = st.text_input("Nom", d.get("nom", ""))
+        poste = st.text_input("Poste recherché", d.get("poste", ""))
+        entreprise = st.text_input("Entreprise")
+        ville = st.text_input("Ville", d.get("ville", ""))
+        annonce = st.text_area("Annonce (collez-la ici, facultatif)", height=150)
+        parcours = st.text_area("Votre parcours en quelques lignes", d.get("exp", ""), height=120)
+        langue = st.selectbox("Langue", LANGUES)
+        go_btn = st.form_submit_button("✨ Générer la lettre", use_container_width=True, type="primary")
+    if go_btn:
+        if not poste or not entreprise:
+            st.warning("Poste et entreprise sont obligatoires.")
         else:
-            d = {"nom": nom, "poste": poste, "entreprise": ent, "ville": ville,
-                 "annonce": annonce, "experience": exp, "competences": comp,
-                 "disponibilite": dispo, "tone": tone, "length": length, "lang": lang}
-            out = run_ai(ai.make_letter, d)
-            if out:
-                ss["letter_out"] = out
-                celebrate(True)
-    result_block("letter_out", "Lettre", poste)
+            d.update(prenom=prenom, nom=nom, poste=poste, ville=ville)
+            prompt = f"""Rédige une lettre de motivation en {langue}, professionnelle et personnalisée.
+Candidat : {prenom} {nom}, ville : {ville}
+Poste : {poste} - Entreprise : {entreprise}
+Annonce : {annonce or 'non fournie'}
+Parcours : {parcours}
+RÈGLES : n'invente aucune expérience ni diplôme absent du parcours. Adapte la lettre aux compétences demandées dans l'annonce.
+Réponds uniquement avec le texte de la lettre, prêt à envoyer."""
+            with st.spinner("Rédaction en cours..."):
+                st.session_state.letter = ask_gemini(prompt)
+    if st.session_state.letter:
+        st.session_state.letter = st.text_area("Votre lettre (modifiable)", st.session_state.letter, height=350)
+        try:
+            st.download_button("⬇️ PDF", letter_pdf(st.session_state.letter), "lettre.pdf",
+                               "application/pdf", use_container_width=True)
+            st.download_button("⬇️ Word", letter_docx(st.session_state.letter), "lettre.docx",
+                               "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                               use_container_width=True)
+        except Exception as exc:
+            st.error(f"Erreur d'export : {exc}")
 
 
-def page_analyze():
-    top("Analyser mon CV")
-    cv = import_cv("an")
-    cv_ok = cv_gate(cv, "an")
-    if st.button("🤖 LANCER L'ANALYSE", key="an_btn"):
-        if len(cv.strip()) < 50:
-            st.warning("Importez ou collez d'abord votre CV.")
-        elif not cv_ok:
-            st.warning("Cochez « Continuer
+# ---------------------------------------------------------------------- main
+init_state()
+{"home": page_home, "cv": page_cv, "letter": page_letter}[st.session_state.page]()
