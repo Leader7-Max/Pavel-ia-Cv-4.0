@@ -1,624 +1,571 @@
-"""PAVEL IA CV PRO — application Streamlit (mobile-first, design premium)."""
-import datetime
-import importlib
-import re
-import types
+"""JURIA — assistant juridique IA (prototype Streamlit + Gemini).  Lancer : streamlit run app.py"""
+import hashlib
+import json
+import secrets
+import uuid
+from datetime import date
+from pathlib import Path
 
 import streamlit as st
 
-try:
-    import ai
-    import exporters
-    from config import COUNTRIES, CV_TYPES, LANGS, LEVELS, TEMPLATES, has
-except Exception as _err:  # fichier essentiel absent ou obsolète
-    st.error(f"🛠️ Fichier essentiel manquant ou incorrect : {type(_err).__name__} : {_err}. "
-             "Vérifiez que ai.py, config.py et exporters.py (et requirements.txt) sont bien dans GitHub, "
-             "à jour, puis faites Reboot.")
-    st.stop()
+from core import db, llm, pipeline as pl, rag, security as sec
+from core.config import (ADMIN_EMAILS, AI_NOTICE, COUNTRIES, DOMAINS, GEMINI_MODEL, LANGS, MAX_UPLOAD_MB,
+                         SHORT_NOTICE, STATUSES, UPLOAD_DIR)
 
-MISSING = []
-PROBLEMS = []
-REQUIRED = {
-    "ui": ["inject_css", "hero", "badges", "stats", "section", "steps", "mini_logo"],
-    "social": ["social_bar", "footer"],
-    "vault": ["save", "panel", "tracker_load", "tracker_save"],
-    "ats_live": ["page"],
-    "interview_coach": ["page"],
-    "linkedin_gen": ["page"],
-    "tracker": ["page"],
-}
+st.set_page_config(page_title="JURIA — Assistant juridique IA", page_icon="⚖️", layout="centered")
+db.init()
+st.markdown("""<style>
+html, body, [class*="css"] {font-size:18px;}
+.block-container {max-width:820px; padding-top:2rem;}
+.stButton>button, .stDownloadButton>button {min-height:3.4rem; border-radius:16px; font-weight:600;}
+</style>""", unsafe_allow_html=True)
+
+P_HOME, P_CHAT, P_DOC, P_CASE = "🏠 Accueil", "💬 Conversation", "📄 Analyser un document", "📁 Mon dossier"
+P_SRC, P_GEN, P_HELPER, P_PRIV = "🔎 Sources & recherche", "✍️ Générer un document", "⚖️ Trouver une aide", "🔐 Confidentialité"
+P_FAQ, P_ADMIN = "❓ Aide", "🛠️ Administration"
 
 
-class _Safe:
-    """Charge un module optionnel. S'il manque ou est incorrect, l'app continue (fonction désactivée)
-    et le problème est expliqué en haut de page."""
-
-    def __init__(self, name):
-        self._name = name
-        self._mod = None
-        try:
-            self._mod = importlib.import_module(name)
-        except ModuleNotFoundError as e:
-            PROBLEMS.append(f"**{name}.py** est absent du dépôt GitHub ({e}).")
-        except SyntaxError as e:
-            PROBLEMS.append(f"**{name}.py** : erreur de syntaxe ligne {e.lineno} ({e.msg}). "
-                            "Le fichier est mal collé ou incomplet.")
-        except Exception as e:
-            PROBLEMS.append(f"**{name}.py** : {type(e).__name__} : {e}")
-        if self._mod is not None:
-            absent = [a for a in REQUIRED.get(name, []) if not hasattr(self._mod, a)]
-            if absent:
-                first = (self._mod.__doc__ or "").strip().splitlines()[:1]
-                PROBLEMS.append(f"**{name}.py** n'est pas la bonne version : il manque {', '.join(absent)}. "
-                                f"Le fichier commence par « {first[0] if first else 'rien'} ». "
-                                "Remplacez-le par celui de l'archive.")
-
-    def __getattr__(self, attr):
-        f = getattr(self._mod, attr, None) if self._mod is not None else None
-        if f is None:
-            return lambda *a, **k: False
-        return f
+def go(page):
+    st.session_state.page = page
 
 
-social = _Safe("social")
-ui = _Safe("ui")
-vault = _Safe("vault")
-ats_live = _Safe("ats_live")
-interview_coach = _Safe("interview_coach")
-linkedin_gen = _Safe("linkedin_gen")
-tracker = _Safe("tracker")
-
-st.set_page_config(page_title="Pavel IA CV Pro", page_icon="📄", layout="centered",
-                   initial_sidebar_state="collapsed")
-
-if PROBLEMS:
-    st.error("🛠️ Le design est désactivé : corrigez ces fichiers dans GitHub puis faites Reboot.\n\n"
-             + "\n\n".join("- " + p for p in PROBLEMS))
-
-ui.inject_css()
-
-ss = st.session_state
-ss.setdefault("page", "home")
-ss.setdefault("step", 1)
-ss.setdefault("cv", {})
-ss.setdefault("docs", [])
-
-CV_KEYS = ["prenom", "nom", "tel", "email", "ville", "pays", "linkedin", "address", "website", "template", "cvtype", "sector",
-           "poste", "level", "target_country", "target_city", "lang", "profile", "experiences",
-           "formation", "skills", "languages", "extras"]
-STEPS = ["Identité", "Poste visé", "Parcours", "Compétences"]
-
-
-def sync():
-    for k in CV_KEYS:
-        if "w_" + k in ss:
-            ss.cv[k] = ss["w_" + k]
-
-
-def go(p):
-    sync()
-    ss.page = p
-
-
-def setstep(n):
-    sync()
-    ss.step = n
-
-
-def run_ai(fn, *args):
-    try:
-        with st.spinner("✨ Pavel IA analyse et rédige..."):
-            return fn(*args)
-    except ai.AIError as e:
-        st.error(str(e))
-    except Exception:
-        st.error("Une erreur inattendue est survenue. Réessayez dans un instant.")
-    return None
-
-
-def celebrate(big=False):
-    st.toast("Document prêt : relisez-le, puis téléchargez-le.", icon="✨")
-    if big:
-        st.balloons()
-
-
-def text_counter(text, min_chars=0):
-    chars = len(text)
-    words = len(text.split()) if text.strip() else 0
-    if min_chars and chars < min_chars:
-        st.caption(f"✏️ {chars} caractères ({words} mots) — encore {min_chars - chars} recommandés")
-    elif min_chars:
-        st.caption(f"✅ {chars} caractères ({words} mots) — longueur suffisante")
+# ------------------------------------------------------------------ utilitaires UI
+def risk_banner(risk):
+    if risk == "red":
+        st.error("🔴 **Situation sensible ou urgente.** Contactez rapidement un avocat, une permanence juridique ou une "
+                 "association spécialisée. En cas de danger immédiat, appelez les services d'urgence de votre pays.")
+        st.button("⚖️ Trouver une aide juridique", key=f"help{uuid.uuid4().hex}", on_click=go, args=(P_HELPER,))
+    elif risk == "orange":
+        st.warning("🟠 **À vérifier avec soin.** Confirmez les points importants et les délais auprès de l'autorité "
+                   "concernée ou d'un professionnel.")
     else:
-        st.caption(f"📊 {chars} caractères ({words} mots)")
+        st.success("🟢 Information générale.")
 
 
-def top(title):
-    st.button("← Accueil", on_click=go, args=("home",), key="back_" + ss.page)
-    ui.mini_logo()
-    st.subheader(title)
-    if not has(ss.page):
-        st.info("Cette fonctionnalité fait partie de l'offre Premium (bientôt disponible).")
-        st.stop()
+def fmt_source(s):
+    if s.get("kind") == "local":
+        return (f"**[{s['label']}] {s['title']}** — {s.get('article') or 'sans article'} · vérifié le "
+                f"{s.get('last_verified') or 'n/c'} · confiance : {s.get('confidence') or 'n/c'}"
+                + (f" · [lien]({s['url']})" if s.get("url") else ""))
+    return f"🌐 [{s['title']}]({s['url']})"
 
 
-def field(label, key, area=False, ph=""):
-    fn = st.text_area if area else st.text_input
-    kw = {} if "w_" + key in ss else {"value": ss.cv.get(key, "")}
-    ss.cv[key] = fn(label, placeholder=ph, key="w_" + key, **kw)
+def new_case_form(uid, key):
+    with st.form(key):
+        country = st.selectbox("Dans quel pays votre situation se déroule-t-elle ?", list(COUNTRIES))
+        domain = st.selectbox("Quel est votre problème ?", DOMAINS)
+        title = st.text_input("Nom du dossier (facultatif)")
+        if st.form_submit_button("Créer le dossier", type="primary", use_container_width=True):
+            cid = db.create_case(uid, title.strip() or f"{domain.split(' ')[0]} — {country}", country, domain)
+            db.audit(uid, "case_created", str(cid))
+            st.session_state["_new_case"] = cid
+            st.rerun()
 
 
-def pick(label, key, options, fmt=None):
-    kw = {}
-    if "w_" + key not in ss:
-        cur = ss.cv.get(key, options[0])
-        kw["index"] = options.index(cur) if cur in options else 0
-    ss.cv[key] = st.selectbox(label, options, key="w_" + key, format_func=fmt or str, **kw)
+def need_case(u):
+    st.info("Créez d'abord un dossier : il regroupe vos échanges et documents (isolés des autres dossiers).")
+    new_case_form(u["id"], "new_case_main")
+# ------------------------------------------------------------------ authentification
+def auth_view():
+    st.title("⚖️ JURIA")
+    st.caption("Assistant juridique IA — comprendre vos droits, préparer votre dossier")
+    st.info(AI_NOTICE)
+    t1, t2 = st.tabs(["Se connecter", "Créer un compte"])
+    with t1:
+        email = st.text_input("E-mail", key="le")
+        pw = st.text_input("Mot de passe", type="password", key="lp")
+        if st.button("Se connecter", type="primary", use_container_width=True):
+            u = db.get_user(email.strip().lower())
+            if u and sec.verify_password(pw, u["pw_hash"], u["salt"]):
+                if not u["is_active"]:
+                    st.error("Ce compte est suspendu. Contactez l'administrateur.")
+                else:
+                    if u["email"] in ADMIN_EMAILS and not u["is_admin"]:
+                        db.set_user_flag(u["id"], "is_admin", True)
+                        u = db.get_user(u["email"])
+                    st.session_state.user = u
+                    db.touch_login(u["id"])
+                    db.audit(u["id"], "login")
+                    st.rerun()
+            else:
+                st.error("Identifiants incorrects.")
+    with t2:
+        email = st.text_input("E-mail", key="re")
+        pw = st.text_input("Mot de passe (10 caractères minimum)", type="password", key="rp")
+        c1 = st.checkbox("Je comprends que j'échange avec une intelligence artificielle, pas avec un avocat.")
+        c2 = st.checkbox("J'accepte le traitement de mes données pour faire fonctionner l'application "
+                         "(elles ne servent pas à entraîner un modèle).")
+        if st.button("Créer mon compte", type="primary", use_container_width=True):
+            e = email.strip().lower()
+            if not sec.valid_email(e):
+                st.error("E-mail invalide.")
+            elif not sec.strong_password(pw):
+                st.error("Mot de passe trop court (10 caractères minimum).")
+            elif not (c1 and c2):
+                st.error("Les deux consentements sont nécessaires.")
+            elif db.get_user(e):
+                st.error("Ce compte existe déjà.")
+            else:
+                h, s = sec.hash_password(pw)
+                uid = db.create_user(e, h, s, db.user_count() == 0 or e in ADMIN_EMAILS)
+                db.touch_login(uid)
+                db.audit(uid, "register")
+                st.session_state.user = db.get_user(e)
+                st.rerun()
 
 
-# Callbacks des assistants IA (ils modifient les champs AVANT leur affichage)
-def fill_profile():
-    sync()
-    c = ss.cv
-    try:
-        ss["w_profile"] = ai.suggest_summary(c.get("poste", ""), c.get("sector", ""),
-                                             c.get("level", ""), c.get("experiences", ""))
-        st.toast("✨ Profil rédigé — relisez-le et modifiez-le.", icon="🎯")
-    except ai.AIError as e:
-        st.toast(str(e))
-    except Exception:
-        st.toast("Fonction indisponible : mettez à jour ai.py.")
-
-
-def improve_field(key, mode):
-    txt = ss.get("w_" + key, "")
-    if not txt.strip():
-        st.toast("Écrivez d'abord quelques notes dans le champ.")
+# ------------------------------------------------------------------ barre latérale
+def sidebar(u):
+    st.session_state.setdefault("page", P_HOME)
+    if "_new_case" in st.session_state:
+        st.session_state.case_id = st.session_state.pop("_new_case")
+    sb = st.sidebar
+    sb.markdown(f"**{u['email']}**")
+    pages = [P_HOME, P_CHAT, P_DOC, P_CASE, P_SRC, P_GEN, P_HELPER, P_PRIV, P_FAQ] + ([P_ADMIN] if u["is_admin"] else [])
+    sb.radio("Menu", pages, key="page", label_visibility="collapsed")
+    cases = db.list_cases(u["id"])
+    if cases:
+        ids = [c["id"] for c in cases]
+        if st.session_state.get("case_id") not in ids:
+            st.session_state.case_id = ids[0]
+        names = {c["id"]: f"{c['title']} · {c['country']}" for c in cases}
+        sb.selectbox("Mon dossier", ids, key="case_id", format_func=names.get)
+    with sb.expander("➕ Nouveau dossier"):
+        new_case_form(u["id"], "new_case_sb")
+    sb.selectbox("Langue des réponses", list(LANGS), key="lang_label")
+    sb.toggle("Recherche web sourcée (Google)", value=True, key="use_web")
+    sb.toggle("Vérification renforcée (2e passe)", value=False, key="verify")
+    if sb.button("Se déconnecter", use_container_width=True):
+        db.audit(u["id"], "logout")
+        st.session_state.clear()
+        st.rerun()
+# ------------------------------------------------------------------ pages
+def home_view(u, case):
+    st.title("Comment pouvons-nous vous aider ?")
+    st.caption(SHORT_NOTICE)
+    if not case:
+        need_case(u)
         return
-    try:
-        ss["w_" + key] = (ai.suggest_bullets(ss.cv.get("poste", ""), txt) if mode == "bullets"
-                          else ai.improve(txt))
-        st.toast("✨ Texte reformulé — vérifiez qu'il reste exact.", icon="🚀")
-    except ai.AIError as e:
-        st.toast(str(e))
-    except Exception:
-        st.toast("Fonction indisponible : mettez à jour ai.py.")
+    st.markdown(f"Dossier actif : **{case['title']}** ({case['country']} · {case['domain']})")
+    items = [("🎙️ Parler à l'assistant", P_CHAT), ("⌨️ Écrire ma question", P_CHAT), ("📄 Analyser un document", P_DOC),
+             ("📁 Mon dossier", P_CASE), ("🔎 Rechercher dans les sources", P_SRC), ("⚖️ Trouver une aide juridique", P_HELPER),
+             ("✍️ Générer un document", P_GEN)]
+    cols = st.columns(2)
+    for i, (label, page) in enumerate(items):
+        cols[i % 2].button(label, key=f"home{i}", on_click=go, args=(page,), use_container_width=True)
 
 
-def fetch_skills():
-    sync()
-    try:
-        ss["sugg_skills"] = ai.suggest_skills(ss.cv.get("poste", ""), ss.cv.get("sector", ""))
-    except ai.AIError as e:
-        st.toast(str(e))
-    except Exception:
-        st.toast("Fonction indisponible : mettez à jour ai.py.")
-
-
-def import_cv(k):
-    f = st.file_uploader("Importer votre CV (PDF, 5 Mo max)", type=["pdf"], key="up_" + k)
-    if f is not None and ss.get("last_" + k) != (f.name, f.size):
-        txt = run_ai(ai.pdf_text, f.getvalue())
-        ss["last_" + k] = (f.name, f.size)
-        if txt:
-            ss["imp_" + k] = txt
-    return st.text_area("Texte du CV (importé, modifiable, ou collez-le ici)", height=200,
-                        key="imp_" + k)
-
-
-def save_doc(kind, text, tpl, poste):
-    ss.docs.append({"kind": kind, "text": text, "tpl": tpl, "poste": poste,
-                    "date": datetime.date.today().strftime("%d/%m/%Y")})
-    in_vault = vault.save(kind, poste, tpl, ss.docs[-1]["date"], text)
-    st.toast("Enregistré dans votre coffre sécurisé !" if in_vault else
-             "Enregistré pour cette session. Activez le coffre (Mes documents) pour le garder.",
-             icon="🎉")
-
-
-def downloads(txt, tpl, base, k):
-    try:
-        st.download_button("⬇️ Télécharger en PDF", exporters.to_pdf(txt, tpl), base + ".pdf",
-                           "application/pdf", key="pdf_" + k)
-        st.download_button(
-            "⬇️ Télécharger en Word (.docx)", exporters.to_docx(txt, tpl), base + ".docx",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            key="docx_" + k)
-    except Exception:
-        st.error("Export PDF/Word impossible avec ce texte. Vérifiez-le puis réessayez.")
-    st.download_button("⬇️ Télécharger en TXT", exporters.to_txt(txt), base + ".txt",
-                       "text/plain", key="txt_" + k)
-
-
-def apply_contact(k):
-    ss[k] = ai.inject_contact(ss[k], ss.get("cc_tel_" + k, ""), ss.get("cc_mail_" + k, ""),
-                              ss.get("cc_addr_" + k, ""))
-    st.toast("Coordonnées ajoutées au CV.", icon="✅")
-
-
-def contact_check(k):
-    """Alerte (et correction en un clic) si l'en-tête du CV n'a ni téléphone ni e-mail."""
-    text = ss.get(k, "")
-    if "## " not in text or not hasattr(ai, "missing_contact"):
-        return
-    miss = ai.missing_contact(text)
-    if not miss:
-        return
-    st.warning("⚠️ Coordonnées manquantes dans l'en-tête : " + " et ".join(miss) + ".")
-    with st.expander("➕ Ajouter mes coordonnées", expanded=True):
-        c = ss.cv
-        st.text_input("Téléphone", value=c.get("tel", ""), key="cc_tel_" + k)
-        st.text_input("E-mail", value=c.get("email", ""), key="cc_mail_" + k)
-        st.text_input("Adresse ou ville", key="cc_addr_" + k,
-                      value=", ".join(x for x in (c.get("address", ""), c.get("ville", "")) if x))
-        st.button("✅ Insérer dans mon CV", on_click=apply_contact, args=(k,), key="cc_btn_" + k)
-
-
-def cv_gate(cv, key):
-    """Vérifie que le texte est bien un CV (CV, lettre, offre ou autre). True si l'on peut continuer."""
-    if len(cv.strip()) < 50:
-        return True
-    sig = hash(cv)
-    cache = ss.get("kind_" + key)
-    if not cache or cache[0] != sig:
-        res = run_ai(ai.detect_type, cv)
-        if not res:
-            return True
-        cache = (sig, res[0], res[1])
-        ss["kind_" + key] = cache
-    _, kind, why = cache
-    if kind == "CV":
-        st.caption("✅ Document reconnu : c'est bien un CV.")
-        return True
-    label = ai.KIND_LABELS.get(kind, "un autre type de document")
-    st.warning(f"📄 Ce document ressemble à **{label}**, pas à un CV : {why}")
-    st.info({"LETTRE": "Pour une lettre, utilisez « Lettre de motivation » (ou « Traduire mon CV » pour la traduire).",
-             "OFFRE": "Collez cette offre dans le champ « annonce » et importez votre vrai CV ici."}.get(
-        kind, "Importez votre CV au format PDF, ou collez son texte, pour obtenir une analyse pertinente."))
-    return st.checkbox("Continuer quand même avec ce document", key="force_" + key)
-
-
-def show_analysis(raw):
-    """Affiche l'analyse : score en anneau, critères, puis encadrés colorés. Texte brut si format inattendu."""
-    parse = getattr(ai, "parse_analysis", None)
-    a = parse(raw) if parse else {"ok": False}
-    if not a.get("ok"):
-        st.markdown(raw)
-        return
-    ui.score(a["score"], a["verdict"] or "Voici votre bilan.")
-    if a["criteria"]:
-        st.markdown("#### 📊 Détail par critère")
-        for label, n, why in a["criteria"]:
-            st.write(f"**{label}** : {n}/100")
-            st.progress(n / 100)
-            st.caption(why)
-    bullets = lambda items: "\n".join("- " + x for x in items)
-    if a["strengths"]:
-        st.success("**✅ Points forts**\n\n" + bullets(a["strengths"]))
-    if a["improve"]:
-        st.warning("**⚠️ À améliorer**\n\n" + bullets(a["improve"]))
-    if a["suggest"]:
-        st.info("**💡 Suggestions concrètes**\n\n" + bullets(a["suggest"]))
-    miss = [m for m in a["missing"] if m.lower().strip(" .") not in ("aucune", "aucun", "rien")]
-    if miss:
-        st.error("**📌 Informations manquantes**\n\n" + bullets(miss))
-
-
-def result_block(k, kind, poste=""):
-    if not ss.get(k):
-        return
-    st.text_area("Résultat (modifiable)", key=k, height=380)
-    is_cv = kind.startswith("CV")
-    if is_cv:
-        contact_check(k)
-    with st.expander("📋 Copier le texte"):
-        st.code(ss[k], language="markdown")
-    keys = list(TEMPLATES)
-    default = ss.cv.get("template") if is_cv and ss.cv.get("template") in keys else keys[0]
-    if is_cv:
-        ui.template_gallery(ss.get("tpl_" + k, default))
-    tpl = st.selectbox("Maquette de mise en page", keys, index=keys.index(default), key="tpl_" + k,
-                       format_func=lambda t: f"{t} : {TEMPLATES[t]}")
-    st.caption("💡 Relisez toujours le document avant de postuler : l'IA structure, vous validez.")
-    downloads(ss[k], tpl, f"{kind}_{datetime.date.today().isoformat()}".replace(" ", "_"), k)
-    st.button("💾 Enregistrer dans Mes documents", on_click=save_doc,
-              args=(kind, ss[k], tpl, poste), key="save_" + k)
-
-
-def show_ats(k):
-    res = ss.get(k)
-    if not res:
-        return
-    st.markdown("#### 📊 Compatibilité ATS indicative")
-    st.caption("Estimation indicative, pas une garantie. Certains éléments graphiques "
-               "complexes peuvent être moins bien interprétés par certains systèmes ATS.")
-    rest = []
-    for l in res.splitlines():
-        m = re.match(r"^\s*(.+?)\s*\|\s*(\d{1,3})\s*\|\s*(.+)$", l)
-        if m:
-            n = min(int(m.group(2)), 100)
-            st.write(f"**{m.group(1)}** — {n}/100")
-            st.progress(n / 100)
-            st.caption(m.group(3))
-        elif l.strip():
-            rest.append(l)
-    if rest:
-        st.markdown("\n\n".join(rest))
-
-
-def ats_button(k, cv, offer=""):
-    if st.button("📄 ANALYSE ATS", key="ats_btn_" + k):
-        if not cv.strip():
-            st.warning("Ajoutez d'abord le texte de votre CV.")
-        else:
-            ss["ats_" + k] = run_ai(ai.ats, cv, offer) or ss.get("ats_" + k, "")
-    show_ats("ats_" + k)
-
-
-# ---------------------------------------------------------------- pages
-def home():
-    ui.hero()
-    ui.badges()
-    n_cv = sum(d["kind"].startswith("CV") for d in ss.docs)
-    n_l = sum(d["kind"] == "Lettre" for d in ss.docs)
-    ui.stats(n_cv, n_l)
-    social.social_bar()
-    groups = [
-        ("Créer", [("📄 CRÉER MON CV", "cv"), ("✉️ LETTRE DE MOTIVATION", "letter"), ("🚀 CV EXPRESS", "express")]),
-        ("Optimiser", [("🤖 ANALYSER MON CV", "analyze"), ("🎯 ADAPTER À UNE OFFRE", "adapt"),
-                       ("📊 SCORE ATS EN DIRECT", "ats"), ("🌍 TRADUIRE MON CV", "translate")]),
-        ("Réussir", [("🎤 SIMULATION D'ENTRETIEN", "interview"), ("💼 PROFIL LINKEDIN", "linkedin"),
-                     ("📌 SUIVI DES CANDIDATURES", "tracker")]),
-        ("Mes documents", [("📁 MES DOCUMENTS", "docs")]),
-    ]
-    for title, items in groups:
-        ui.section(title)
-        for label, p in items:
-            st.button(label, on_click=go, args=(p,), key="home_" + p)
-    ui.steps()
-    with st.expander("🔒 Confidentialité"):
-        st.write("Vos informations sont utilisées pour générer et personnaliser vos documents. "
-                 "Le contenu est envoyé au service IA (Gemini) pour la génération. Vos documents "
-                 "ne sont conservés que pendant votre session, sauf si vous activez le coffre "
-                 "personnel (sauvegarde chiffrée avec votre code).")
-
-
-def page_cv():
-    top("Créer mon CV")
-    step = ss.step
-    st.progress(step / 4)
-    st.caption(f"Étape {step} sur 4 — {STEPS[step - 1]}")
-    if step == 1:
-        st.caption("Les champs * apparaîtront obligatoirement dans l'en-tête de votre CV.")
-        for lab, key in [("Prénom *", "prenom"), ("Nom *", "nom"), ("Téléphone *", "tel"),
-                         ("E-mail *", "email"), ("Adresse (rue, code postal)", "address"),
-                         ("Ville *", "ville"), ("Pays", "pays"), ("LinkedIn (facultatif)", "linkedin"),
-                         ("Site web (facultatif)", "website")]:
-            field(lab, key)
-    elif step == 2:
-        pick("Type de CV", "cvtype", CV_TYPES)
-        field("Secteur (personnalisable)", "sector")
-        field("Poste recherché", "poste")
-        pick("Niveau d'expérience", "level", LEVELS)
-        pick("Pays ciblé", "target_country", COUNTRIES)
-        field("Ville ciblée", "target_city")
-        pick("Langue du CV", "lang", list(LANGS))
-        pick("Maquette du CV", "template", list(TEMPLATES), lambda t: f"{t} : {TEMPLATES[t]}")
-        ui.template_gallery(ss.cv.get("template", ""))
-        field("Profil professionnel (modifiable, facultatif)", "profile", True)
-        st.button("✨ Rédiger mon profil professionnel (IA)", on_click=fill_profile,
-                  key="ai_sugg_summary")
-    elif step == 3:
-        field("Expériences (une par bloc : poste, entreprise, ville, période, missions, "
-              "résultats)", "experiences", True)
-        st.button("💡 Suggérer des missions percutantes (IA)", on_click=improve_field,
-                  args=("experiences", "bullets"), key="ai_sugg_bullets")
-        st.button("✨ Améliorer cette formulation (IA)", on_click=improve_field,
-                  args=("experiences", "improve"), key="impr_exp")
-        field("Formation (diplôme, établissement, ville, période)", "formation", True)
-    else:
-        field("Compétences (techniques, professionnelles, logiciels, outils)", "skills", True)
-        st.button("💡 Voir des suggestions de compétences (IA)", on_click=fetch_skills,
-                  key="ai_sugg_skills")
-        if ss.get("sugg_skills"):
-            st.info("Suggestions à vérifier : recopiez uniquement ce que vous maîtrisez vraiment.")
-            st.markdown(ss["sugg_skills"])
-        field("Langues et niveaux", "languages", True)
-        field("Compléments (certifications, permis, disponibilité, mobilité, intérêts)",
-              "extras", True)
-    c1, c2 = st.columns(2)
-    if step > 1:
-        c1.button("← Précédent", on_click=setstep, args=(step - 1,), key="prev")
-    if step < 4:
-        c2.button("Suivant →", on_click=setstep, args=(step + 1,), key="next")
-    if step == 4 and st.button("✨ GÉNÉRER MON CV", key="gen_cv"):
-        sync()
-        c = ss.cv
-        miss = [lab for lab, ok in (("votre nom", c.get("nom") or c.get("prenom")),
-                                    ("votre téléphone", c.get("tel")), ("votre e-mail", c.get("email")),
-                                    ("votre ville ou adresse", c.get("ville") or c.get("address"))) if not ok]
-        if miss:
-            st.warning("Pour un CV complet, renseignez à l'étape 1 : " + ", ".join(miss) + ".")
-        else:
-            out = run_ai(ai.make_cv, dict(ss.cv))
-            if out:
-                ss["cv_out"] = out
-                celebrate(True)
-    result_block("cv_out", "CV", ss.cv.get("poste", ""))
-
-
-def page_letter():
-    top("Ma lettre de motivation")
-    nom = st.text_input("Nom", key="lt_nom")
-    poste = st.text_input("Poste recherché", key="lt_poste")
-    ent = st.text_input("Entreprise", key="lt_ent")
-    ville = st.text_input("Ville", key="lt_ville")
-    annonce = st.text_area("Annonce complète", height=180, key="lt_annonce")
-    exp = st.text_area("Votre expérience", key="lt_exp")
-    comp = st.text_area("Vos compétences", key="lt_comp")
-    dispo = st.text_input("Disponibilité", key="lt_dispo")
-    tone = st.selectbox("Ton", ["Professionnel", "Chaleureux", "Dynamique", "Sobre"], key="lt_tone")
-    length = st.selectbox("Longueur", ["Courte", "Moyenne", "Détaillée"], key="lt_len")
-    lang = st.selectbox("Langue", list(LANGS), key="lt_lang")
-    if st.button("✨ GÉNÉRER MA LETTRE", key="gen_letter"):
-        if not (nom.strip() and poste.strip()):
-            st.warning("Renseignez au moins votre nom et le poste.")
-        else:
-            d = {"nom": nom, "poste": poste, "entreprise": ent, "ville": ville,
-                 "annonce": annonce, "experience": exp, "competences": comp,
-                 "disponibilite": dispo, "tone": tone, "length": length, "lang": lang}
-            out = run_ai(ai.make_letter, d)
-            if out:
-                ss["letter_out"] = out
-                celebrate(True)
-    result_block("letter_out", "Lettre", poste)
-
-
-def page_analyze():
-    top("Analyser mon CV")
-    cv = import_cv("an")
-    cv_ok = cv_gate(cv, "an")
-    if st.button("🤖 LANCER L'ANALYSE", key="an_btn"):
-        if len(cv.strip()) < 50:
-            st.warning("Importez ou collez d'abord votre CV.")
-        elif not cv_ok:
-            st.warning("Cochez « Continuer quand même » si vous voulez analyser ce document.")
-        else:
-            ss["an_res"] = run_ai(ai.analyze, cv) or ss.get("an_res", "")
-    if ss.get("an_res"):
-        st.markdown("### 📋 ANALYSE PAVEL IA")
-        show_analysis(ss["an_res"])
-        if st.button("✨ AMÉLIORER MON CV", key="imp_btn"):
-            out = run_ai(ai.improve_cv, cv, ss["an_res"])
-            if out:
-                ss["imp_out"] = out
-                celebrate()
-    result_block("imp_out", "CV amélioré")
-    ats_button("an", cv)
-
-
-def page_adapt():
-    top("Adapter mon CV à une offre")
-    cv = import_cv("ad")
-    cv_ok = cv_gate(cv, "ad")
-    offer = st.text_area("Collez l'annonce", height=180, key="ad_offer")
-    text_counter(offer, min_chars=30)
-    ready = len(cv.strip()) >= 50 and len(offer.strip()) >= 30
-    if st.button("🔎 COMPARER CV ↔ OFFRE", key="ad_cmp"):
-        if not ready:
-            st.warning("Ajoutez votre CV et l'annonce de l'offre.")
-        elif not cv_ok:
-            st.warning("Cochez « Continuer quand même » si vous voulez utiliser ce document comme CV.")
-        else:
-            ss["ad_res"] = run_ai(ai.match, cv, offer) or ss.get("ad_res", "")
-    if ss.get("ad_res"):
-        m = re.search(r"(\d{1,3})\s*%", ss["ad_res"])
-        if m:
-            n = min(int(m.group(1)), 100)
-            st.progress(n / 100)
-            st.caption(f"Correspondance : {n} % — estimation indicative, pas une garantie "
-                       "d'embauche ni de réussite ATS.")
-        st.markdown(ss["ad_res"])
-        if st.button("✨ GÉNÉRER LE CV ADAPTÉ", key="ad_gen"):
-            out = run_ai(ai.adapt, cv, offer)
-            if out:
-                ss["ad_out"] = out
-                celebrate()
-    result_block("ad_out", "CV adapté")
-    ats_button("ad", cv, offer)
-
-
-def page_translate():
-    top("Traduire mon CV")
-    txt = import_cv("tr")
-    lang = st.selectbox("Traduire vers", list(LANGS), key="tr_lang")
-    if st.button("🌍 TRADUIRE", key="tr_btn"):
-        if len(txt.strip()) < 20:
-            st.warning("Importez ou collez d'abord le texte.")
-        else:
-            out = run_ai(ai.translate, txt, lang)
-            if out:
-                ss["tr_out"] = out
-                celebrate()
-    result_block("tr_out", "CV traduit")
-
-
-def page_express():
-    top("CV Express")
-    st.caption("Décrivez votre situation librement. L'IA extrait les faits, vous les corrigez, "
-               "puis elle génère vos documents sans rien inventer.")
-    free = st.text_area("Votre texte libre", height=160, key="ex_text",
-                        placeholder="Je cherche un emploi de préparateur de commande à Lyon...")
-    text_counter(free, min_chars=20)
-    lang = st.selectbox("Langue", list(LANGS), key="ex_lang")
-    country = st.selectbox("Pays ciblé", COUNTRIES, key="ex_country")
-    if st.button("🔎 EXTRAIRE LES INFORMATIONS", key="ex_extract"):
-        if len(free.strip()) < 20:
-            st.warning("Écrivez quelques phrases sur vous.")
-        else:
-            out = run_ai(ai.extract, free)
-            if out:
-                ss["ex_facts"] = out
-    if ss.get("ex_facts"):
-        facts = st.text_area("Informations extraites (corrigez avant de générer)", height=220,
-                             key="ex_facts")
-        if st.button("✨ GÉNÉRER MON CV", key="ex_cv_btn"):
-            out = run_ai(ai.from_facts, facts, "CV", lang, country)
-            if out:
-                ss["ex_cv"] = out
-                celebrate()
-        if st.button("✉️ GÉNÉRER MA LETTRE", key="ex_l_btn"):
-            out = run_ai(ai.from_facts, facts, "Lettre", lang, country)
-            if out:
-                ss["ex_letter"] = out
-                celebrate()
-    result_block("ex_cv", "CV")
-    result_block("ex_letter", "Lettre")
-
-
-def reuse(i):
-    ss["cv_out"] = ss.docs[i]["text"]
-    ss.page = "cv"
-    ss.step = 4
-
-
-def page_docs():
-    top("Mes documents")
-    st.caption("📂 Cette liste disparaît quand vous actualisez la page. Pour retrouver vos documents à tout moment, activez le coffre personnel en bas de cette page.")
-    if not ss.docs:
-        st.info("Aucun document enregistré pour l'instant.")
-    for i in reversed(range(len(ss.docs))):
-        d = ss.docs[i]
-        with st.expander(f"{d['kind']} — {d['poste'] or 'sans titre'} — {d['date']}"):
-            st.write(f"Modèle : {d['tpl']}")
-            downloads(d["text"], d["tpl"], f"{d['kind']}_{i}".replace(" ", "_"), f"doc{i}")
-            if d["kind"].startswith("CV"):
-                st.button("♻️ Réutiliser", on_click=reuse, args=(i,), key=f"reuse{i}")
-    st.divider()
-    vault.panel(downloads)
-
-
-H = types.SimpleNamespace(ss=ss, ai=ai, ui=ui, vault=vault, top=top, run_ai=run_ai, import_cv=import_cv,
-                          cv_gate=cv_gate, show_ats=show_ats, ats_button=ats_button, go=go)
-
-
-def ext_page(mod, name):
-    """Page fournie par un module externe, avec un message clair si le fichier manque."""
-    def run():
-        if getattr(mod, "_mod", None) is None or not hasattr(mod._mod, "page"):
-            st.button("← Accueil", on_click=go, args=("home",), key="back_ext_" + name)
-            st.error(f"Le fichier {name}.py est absent ou obsolète dans GitHub : ajoutez-le, puis redémarrez l'app.")
+def render_msg(m, lang):
+    meta = json.loads(m["meta"]) if m["meta"] else {}
+    with st.chat_message("user" if m["role"] == "user" else "assistant"):
+        st.markdown(m["content"])
+        if m["role"] != "assistant":
             return
-        mod.page(H)
-    return run
+        if m["kind"] == "answer":
+            risk_banner(m["risk"])
+        for f in meta.get("flags", []):
+            st.caption("⚠️ " + f)
+        if meta.get("sources"):
+            with st.expander(f"📚 Sources ({len(meta['sources'])})"):
+                for s in meta["sources"]:
+                    st.markdown(fmt_source(s))
+        if m["kind"] == "answer" and st.button("🔊 Écouter", key=f"tts{m['id']}"):
+            try:
+                st.audio(llm.tts(m["content"], LANGS[lang]), format="audio/mp3")
+            except Exception as e:
+                st.error(f"Lecture vocale indisponible : {e}")
 
 
-PAGES = {"home": home, "cv": page_cv, "letter": page_letter, "analyze": page_analyze,
-         "adapt": page_adapt, "translate": page_translate, "express": page_express, "docs": page_docs,
-         "ats": ext_page(ats_live, "ats_live"), "interview": ext_page(interview_coach, "interview_coach"),
-         "linkedin": ext_page(linkedin_gen, "linkedin_gen"), "tracker": ext_page(tracker, "tracker")}
-PAGES.get(ss.page, home)()
-st.divider()
-social.footer(ss.page != "home")
-if MISSING:
-    st.warning("⚠️ Fichiers à vérifier dans GitHub : " + " · ".join(MISSING))
-    
+def chat_view(u, case, lang):
+    st.subheader(f"💬 {case['title']}")
+    st.caption(f"Assistant juridique IA — {case['domain']} — {case['country']} · Statut : intelligence artificielle")
+    st.caption(SHORT_NOTICE)
+    if db.country_source_count(case["country"]) == 0:
+        st.warning(f"Base juridique locale non disponible pour {case['country']} : les réponses reposent sur la recherche "
+                   "web sourcée (si activée) et sur les connaissances générales du modèle, à vérifier.")
+    hist = db.get_messages(case["id"], u["id"])
+    for m in hist:
+        render_msg(m, st.session_state.get("lang_label", "Français"))
+    audio = st.audio_input("🎙️ Parler à l'assistant")
+    q = st.chat_input("Écrivez votre question…")
+    if audio:
+        raw = audio.getvalue()
+        h = hashlib.md5(raw).hexdigest()
+        if st.session_state.get("last_audio") != h:
+            st.session_state.last_audio = h
+            with st.spinner("Transcription…"):
+                try:
+                    q = llm.transcribe(raw)
+                except Exception as e:
+                    st.error(f"Transcription impossible : {e}")
+    if q and q.strip():
+        db.add_message(case["id"], "user", "user", q)
+        with st.chat_message("user"):
+            st.markdown(q)
+        with st.chat_message("assistant"), st.spinner("Analyse en cours…"):
+            try:
+                res = pl.respond(q, case, u["id"], hist, lang, st.session_state.get("use_web", True),
+                                 st.session_state.get("verify", False))
+            except Exception as e:
+                res = {"kind": "error", "text": f"Une erreur est survenue : {e}", "risk": None, "sources": [], "flags": []}
+        db.add_message(case["id"], "assistant", res["kind"], res["text"], res["risk"],
+                       {"sources": res["sources"], "flags": res["flags"]})
+        db.audit(u["id"], "question", f"case={case['id']} kind={res['kind']} risk={res['risk']}")
+        st.rerun()
+def docs_view(u, case, lang):
+    st.header("📄 Analyser un document")
+    st.caption("Photo, image ou PDF. L'IA lit le document (OCR intégré), n'invente aucun délai et signale ce qui est illisible.")
+    files = st.file_uploader("Importer un ou plusieurs documents", type=["pdf", "png", "jpg", "jpeg", "webp"],
+                             accept_multiple_files=True)
+    with st.expander("📷 Photographier un document"):
+        cam = st.camera_input("Photo")
+    items = [(f.name, f.type, f.getvalue()) for f in files or []]
+    if cam:
+        items.append((f"photo_{date.today()}.jpg", "image/jpeg", cam.getvalue()))
+    if items and st.button("Analyser", type="primary", use_container_width=True):
+        for name, mime, data in items:
+            if len(data) > MAX_UPLOAD_MB * 1024 * 1024:
+                st.error(f"{name} : fichier trop volumineux (max {MAX_UPLOAD_MB} Mo).")
+                continue
+            with st.spinner(f"Analyse de {name}…"):
+                try:
+                    analysis = pl.analyze_document(data, mime, name, case, u["id"], lang)
+                except Exception as e:
+                    st.error(f"{name} : analyse impossible ({e})")
+                    continue
+            path = UPLOAD_DIR / f"{uuid.uuid4().hex}.enc"
+            path.write_bytes(sec.encrypt(data))
+            db.add_document(case["id"], name, mime, str(path), analysis)
+            db.audit(u["id"], "document_analyzed", f"case={case['id']}")
+            st.subheader(name)
+            risk_banner(pl.heuristic_risk(analysis))
+            st.markdown(analysis)
+    st.caption("Les documents sont enregistrés chiffrés dans le dossier actif.")
+
+
+def case_view(u, case, lang):
+    st.header(f"📁 {case['title']}")
+    st.caption(f"{case['country']} · {case['domain']}")
+    t = st.tabs(["Résumé", "Documents", "Chronologie", "Données"])
+    with t[0]:
+        for label, kind in [("📝 Résume mon dossier", "summary"), ("📋 Quels documents me manquent ?", "missing"),
+                            ("🗓️ Reconstituer la chronologie", "timeline"), ("➡️ Prochains éléments à vérifier", "next")]:
+            if st.button(label, key=f"task_{kind}", use_container_width=True):
+                with st.spinner("Analyse du dossier…"):
+                    try:
+                        st.session_state.task_out = (case["id"], pl.case_task(case, u["id"], kind, lang))
+                    except Exception as e:
+                        st.error(str(e))
+        out = st.session_state.get("task_out")
+        if out and out[0] == case["id"]:
+            st.markdown(out[1])
+    with t[1]:
+        docs = db.list_documents(case["id"], u["id"])
+        if not docs:
+            st.info("Aucun document. Utilisez « Analyser un document ».")
+        for d in docs:
+            with st.expander(f"{d['filename']} — {d['created_at'][:10]}"):
+                st.markdown(d["analysis"] or "")
+                try:
+                    st.download_button("⬇️ Télécharger l'original", sec.decrypt(Path(d["path"]).read_bytes()),
+                                       file_name=d["filename"], mime=d["mime"], key=f"dl{d['id']}")
+                except Exception:
+                    st.caption("Original indisponible.")
+    with t[2]:
+        with st.form("ev"):
+            c1, c2 = st.columns([1, 2])
+            d = c1.date_input("Date", value=date.today())
+            lab = c2.text_input("Événement (ex. : réception de la décision)")
+            if st.form_submit_button("Ajouter") and lab.strip():
+                db.add_event(case["id"], d.isoformat(), lab.strip())
+                st.rerun()
+        for e in db.list_events(case["id"], u["id"]):
+            st.markdown(f"- **{e['event_date']}** — {e['label']}")
+    with t[3]:
+        st.download_button("⬇️ Exporter ce dossier (JSON)",
+                           json.dumps([c for c in db.export_user(u["id"])["cases"] if c["id"] == case["id"]],
+                                      ensure_ascii=False, indent=2),
+                           file_name=f"dossier_{case['id']}.json", mime="application/json")
+        if st.checkbox("Je veux supprimer définitivement ce dossier et ses documents") and st.button("🗑️ Supprimer", type="primary"):
+            db.delete_case(case["id"], u["id"])
+            db.audit(u["id"], "case_deleted", str(case["id"]))
+            st.session_state.pop("case_id", None)
+            st.rerun()
+
+
+def sources_view():
+    st.header("🔎 Sources & recherche")
+    st.caption("Recherche dans la base juridique LOCALE (textes ajoutés par l'administrateur).")
+    cov = db.coverage()
+    if cov:
+        st.dataframe(cov, use_container_width=True, hide_index=True)
+    else:
+        st.warning("Aucune source locale pour l'instant. L'administrateur doit ajouter des textes officiels "
+                   "(page Administration). Aucune donnée juridique n'est fournie par défaut.")
+    c1, c2 = st.columns(2)
+    country = c1.selectbox("Pays", list(COUNTRIES), key="sc")
+    domain = c2.selectbox("Domaine", DOMAINS, key="sd")
+    q = st.text_input("Votre recherche")
+    if q and st.button("Rechercher", type="primary", use_container_width=True):
+        hits = rag.retrieve(q, country, domain, k=8)
+        if not hits:
+            st.info("Aucun passage trouvé (statut « en vigueur » et date d'application respectés).")
+        for h in hits:
+            with st.expander(f"{h['title']} — {h.get('article') or 'sans article'}"):
+                st.caption(f"{h['country']} · {h.get('jurisdiction') or ''} · statut : {h['status']} · en vigueur depuis "
+                           f"{h.get('effective_from') or 'n/c'} · vérifié le {h.get('last_verified') or 'n/c'} · "
+                           f"confiance : {h.get('confidence') or 'n/c'}")
+                st.write(h["content"])
+                if h.get("url"):
+                    st.markdown(f"[Source officielle]({h['url']})")
+def gen_view(u, case, lang):
+    st.header("✍️ Générer un document")
+    st.warning("Tout document généré est un **projet à vérifier** avant utilisation ou envoi. Aucune garantie d'acceptation.")
+    kind = st.selectbox("Type de document", pl.DRAFT_KINDS)
+    instr = st.text_area("Précisions (destinataire, faits, ce que vous demandez…)", height=140)
+    if st.button("Générer le projet", type="primary", use_container_width=True):
+        with st.spinner("Rédaction…"):
+            try:
+                st.session_state.draft = pl.draft_document(case, u["id"], kind, instr, lang)
+                db.audit(u["id"], "draft_generated", kind)
+            except Exception as e:
+                st.error(str(e))
+    if st.session_state.get("draft"):
+        st.markdown(st.session_state.draft)
+        st.download_button("⬇️ Télécharger (.txt)", st.session_state.draft, file_name="projet_juria.txt")
+
+
+def helper_view(u, case):
+    st.header("⚖️ Trouver une aide juridique")
+    st.caption("Recherche web d'avocats, associations, permanences et services publics. Vérifiez toujours les informations.")
+    c1, c2 = st.columns(2)
+    country = c1.selectbox("Pays", list(COUNTRIES), index=list(COUNTRIES).index(case["country"]) if case else 0, key="hc")
+    city = c2.text_input("Ville")
+    domain = st.selectbox("Domaine", DOMAINS, key="hd")
+    lang_label = st.selectbox("Langue", ["Français", "English", "Autre"], key="hl")
+    free = st.checkbox("Aide gratuite uniquement")
+    if st.button("Rechercher", type="primary", use_container_width=True):
+        with st.spinner("Recherche…"):
+            try:
+                text, srcs = pl.find_help(country, city, domain, lang_label, free)
+                st.markdown(text)
+                for s in srcs:
+                    st.markdown(fmt_source(s))
+            except Exception as e:
+                st.error(str(e))
+    if country == "France":
+        st.markdown("**Points d'entrée officiels (France, à vérifier)** : [justice.fr](https://www.justice.fr) · "
+                    "[service-public.fr](https://www.service-public.fr) · [defenseurdesdroits.fr](https://www.defenseurdesdroits.fr) · "
+                    "[lacimade.org](https://www.lacimade.org)")
+
+
+def privacy_view(u):
+    st.header("🔐 Confidentialité & données")
+    st.markdown("- Mots de passe hachés (scrypt) ; documents originaux chiffrés au repos.\n"
+                "- Dossiers isolés par compte. Journal de sécurité des actions (sans contenu).\n"
+                "- L'administrateur ne voit ni vos conversations ni vos documents.\n"
+                "- Vos textes et documents sont envoyés à l'API Gemini pour produire les réponses ; "
+                "la lecture vocale (gTTS) envoie le texte à un service Google.\n"
+                "- Vos données ne servent pas à entraîner un modèle depuis cette application.")
+    with st.expander("🔑 Changer mon mot de passe"):
+        cur = st.text_input("Mot de passe actuel", type="password", key="pw_cur")
+        new = st.text_input("Nouveau mot de passe (10 caractères minimum)", type="password", key="pw_new")
+        if st.button("Modifier le mot de passe"):
+            if not sec.verify_password(cur, u["pw_hash"], u["salt"]):
+                st.error("Mot de passe actuel incorrect.")
+            elif not sec.strong_password(new):
+                st.error("Nouveau mot de passe trop court.")
+            else:
+                h, s = sec.hash_password(new)
+                db.update_password(u["id"], h, s)
+                db.audit(u["id"], "password_changed")
+                st.success("Mot de passe modifié.")
+    st.download_button("⬇️ Exporter toutes mes données (JSON)",
+                       json.dumps(db.export_user(u["id"]), ensure_ascii=False, indent=2),
+                       file_name="mes_donnees_juria.json", mime="application/json")
+    st.divider()
+    if st.checkbox("Je veux supprimer définitivement mon compte et toutes mes données") and \
+            st.button("🗑️ Supprimer mon compte", type="primary"):
+        db.delete_user(u["id"])
+        st.session_state.clear()
+        st.rerun()
+
+
+def faq_view():
+    st.header("❓ Aide")
+    st.info(AI_NOTICE)
+    st.markdown("**Comment ça marche ?** Créez un dossier (pays + problème), posez votre question par écrit ou à la voix. "
+                "L'IA peut d'abord vous poser quelques questions, puis répond avec ses sources.\n\n"
+                "**Que signifient 🟢🟠🔴 ?** Information générale / à vérifier avec soin / sensible ou urgent.\n\n"
+                "**Puis-je me fier aux délais ?** Seulement s'ils sont issus d'une source ou de votre document. "
+                "Vérifiez-les toujours auprès de l'autorité concernée.\n\n"
+                "**L'IA peut-elle se tromper ?** Oui. Pour toute décision importante, consultez un professionnel.")
+# ------------------------------------------------------------------ administration
+def admin_dashboard():
+    items = list(db.stats().items())
+    for row in (items[:3], items[3:]):
+        for col, (k, v) in zip(st.columns(3), row):
+            col.metric(k, v)
+    st.subheader("Couverture juridique locale")
+    cov = db.coverage()
+    if cov:
+        st.dataframe(cov, use_container_width=True, hide_index=True)
+    else:
+        st.warning("Aucune source locale : les réponses reposent sur la recherche web et le modèle.")
+
+
+def admin_users(u):
+    users = db.list_users()
+    st.dataframe([{"ID": x["id"], "E-mail": x["email"], "Rôle": "Admin" if x["is_admin"] else "Utilisateur",
+                   "Statut": "Actif" if x["is_active"] else "Suspendu", "Inscrit le": x["created_at"][:10],
+                   "Dernière connexion": (x["last_login"] or "—")[:16], "Dossiers": x["cases"],
+                   "Questions": x["questions"]} for x in users], use_container_width=True, hide_index=True)
+    st.caption("Par confidentialité, l'administration ne voit ni les conversations ni les documents des utilisateurs.")
+    opts = {x["id"]: x["email"] for x in users}
+    uid = st.selectbox("Gérer un compte", list(opts), format_func=opts.get)
+    t = next(x for x in users if x["id"] == uid)
+    me = t["id"] == u["id"]
+    last_admin = bool(t["is_admin"]) and db.admin_count() <= 1
+    if me:
+        st.info("C'est votre compte : suspension, retrait du rôle admin et suppression sont désactivés.")
+    c1, c2 = st.columns(2)
+    if c1.button("▶️ Réactiver" if not t["is_active"] else "⏸️ Suspendre", disabled=me, key="u_act",
+                 use_container_width=True):
+        db.set_user_flag(uid, "is_active", not t["is_active"])
+        db.audit(u["id"], "admin_set_active", f"user={uid} active={not t['is_active']}")
+        st.rerun()
+    if c2.button("⬇️ Retirer admin" if t["is_admin"] else "⬆️ Passer admin", disabled=(me or last_admin), key="u_adm",
+                 use_container_width=True):
+        db.set_user_flag(uid, "is_admin", not t["is_admin"])
+        db.audit(u["id"], "admin_set_admin", f"user={uid} admin={not t['is_admin']}")
+        st.rerun()
+    if st.button("🔑 Réinitialiser le mot de passe", key="u_pw", use_container_width=True):
+        tmp = secrets.token_urlsafe(9)
+        h, s = sec.hash_password(tmp)
+        db.update_password(uid, h, s)
+        db.audit(u["id"], "admin_reset_password", f"user={uid}")
+        st.success(f"Mot de passe temporaire pour {t['email']} (affiché une seule fois) :")
+        st.code(tmp)
+        st.caption("Communiquez-le à l'utilisateur ; il pourra le changer dans « Confidentialité ».")
+    with st.expander("🗑️ Supprimer ce compte"):
+        st.warning("Supprime définitivement le compte, ses dossiers, messages et documents.")
+        if st.checkbox("Je confirme la suppression", key="u_delchk") and st.button(
+                "Supprimer définitivement", type="primary", disabled=(me or last_admin), key="u_del"):
+            db.delete_user(uid)
+            db.audit(u["id"], "admin_deleted_user", f"user={uid}")
+            st.rerun()
+
+
+def admin_sources(u):
+    st.warning("N'ajoutez que des textes dont vous avez vérifié la provenance officielle. Sans validation par un juriste, "
+               "marquez la confiance « non vérifiée ».")
+    with st.form("src"):
+        c1, c2 = st.columns(2)
+        country = c1.selectbox("Pays", list(COUNTRIES))
+        domain = c2.selectbox("Domaine", ["Tous"] + DOMAINS)
+        jur = st.text_input("Juridiction (ex. National)")
+        title = st.text_input("Titre du texte *")
+        article = st.text_input("Article / référence")
+        url = st.text_input("URL de la source officielle")
+        d1, d2, d3 = st.columns(3)
+        pub = d1.text_input("Date du texte (AAAA-MM-JJ)")
+        eff = d2.text_input("Entrée en vigueur")
+        eff_to = d3.text_input("Fin de validité")
+        s1, s2 = st.columns(2)
+        status = s1.selectbox("Statut", STATUSES)
+        conf = s2.selectbox("Niveau de confiance", ["officielle", "secondaire", "non vérifiée"], index=2)
+        up = st.file_uploader("Fichier (.txt, .md, .pdf)", type=["txt", "md", "pdf"])
+        pasted = st.text_area("…ou texte collé", height=150)
+        if st.form_submit_button("Ajouter la source", type="primary"):
+            try:
+                for dv in (pub, eff, eff_to):
+                    if dv:
+                        date.fromisoformat(dv)
+                text = rag.extract_text(up.name, up.getvalue()) if up else pasted
+                if not title.strip() or not text.strip():
+                    raise ValueError("Titre et texte obligatoires.")
+                if conf == "officielle" and not url.strip():
+                    raise ValueError("Une source « officielle » doit avoir une URL.")
+                meta = dict(country=country, jurisdiction=jur, domain=domain, title=title.strip(), article=article,
+                            url=url, published=pub, effective_from=eff, effective_to=eff_to, modified=date.today().isoformat(),
+                            status=status, confidence=conf, last_verified=date.today().isoformat())
+                with st.spinner("Indexation…"):
+                    sid, n, warn = rag.ingest(meta, text)
+                db.audit(u["id"], "source_added", str(sid))
+                st.success(f"Source ajoutée ({n} passages).")
+                if warn:
+                    st.warning(warn)
+            except Exception as e:
+                st.error(str(e))
+    st.subheader("Sources existantes")
+    for s in db.list_sources(50):
+        with st.expander(f"#{s['id']} {s['title']} — {s['country']} · {s['status']}"):
+            st.caption(f"{s['domain']} · vérifié le {s['last_verified'] or 'n/c'} · confiance : {s['confidence']}")
+            ns = st.selectbox("Statut", STATUSES, index=STATUSES.index(s["status"]), key=f"st{s['id']}")
+            c1, c2 = st.columns(2)
+            if c1.button("Enregistrer", key=f"sv{s['id']}"):
+                db.set_source_status(s["id"], ns)
+                st.rerun()
+            if c2.button("Marquer vérifié aujourd'hui", key=f"vf{s['id']}"):
+                db.set_source_status(s["id"], ns, verified_today=True)
+                st.rerun()
+
+
+def admin_view(u):
+    st.header("🛠️ Administration")
+    t = st.tabs(["📊 Tableau de bord", "👥 Utilisateurs", "📚 Sources", "🧾 Journal"])
+    with t[0]:
+        admin_dashboard()
+    with t[1]:
+        admin_users(u)
+    with t[2]:
+        admin_sources(u)
+    with t[3]:
+        st.subheader("Journal de sécurité (30 derniers événements)")
+        st.dataframe(db.recent_audit(30), use_container_width=True, hide_index=True)
+        st.caption(f"Modèle : {GEMINI_MODEL}")
+
+
+# ------------------------------------------------------------------ routage
+def main():
+    u = st.session_state.get("user")
+    if not u:
+        return auth_view()
+    fresh = db.get_user_by_id(u["id"])
+    if not fresh or not fresh["is_active"]:
+        st.session_state.clear()
+        st.warning("Session fermée : ce compte est suspendu ou supprimé.")
+        return auth_view()
+    st.session_state.user = u = fresh
+    sidebar(u)
+    page = st.session_state.page
+    cid = st.session_state.get("case_id")
+    case = db.get_case(cid, u["id"]) if cid else None
+    lang = LANGS[st.session_state.get("lang_label", "Français")]
+    if page == P_HOME:
+        home_view(u, case)
+    elif page in (P_CHAT, P_DOC, P_CASE, P_GEN) and not case:
+        need_case(u)
+    elif page == P_CHAT:
+        chat_view(u, case, lang)
+    elif page == P_DOC:
+        docs_view(u, case, lang)
+    elif page == P_CASE:
+        case_view(u, case, lang)
+    elif page == P_GEN:
+        gen_view(u, case, lang)
+    elif page == P_SRC:
+        sources_view()
+    elif page == P_HELPER:
+        helper_view(u, case)
+    elif page == P_PRIV:
+        privacy_view(u)
+    elif page == P_FAQ:
+        faq_view()
+    elif page == P_ADMIN and u["is_admin"]:
+        admin_view(u)
+    st.divider()
+    st.caption(SHORT_NOTICE)
+
+
+main()
