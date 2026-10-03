@@ -455,4 +455,7 @@ def interview_feedback(question, answer, poste, kind, lang, cv):
 
 
 def parse_note(raw):
-    m = re.search(r"NOTE\s*:?\s*(\d{1,2}
+    m = re.search(r"NOTE\s*:?\s*(\d{1,2})", raw)
+    if m:
+        return int(m.group(1))
+    return None
